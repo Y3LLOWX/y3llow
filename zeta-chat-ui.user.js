@@ -4,6 +4,7 @@
 // @version      1.1
 // @description  제타 AI 채팅방의 폰트 크기, 줄간격, 여백, 배경 투명도를 자유롭게 조절합니다.
 // @author       You
+// @match        https://zeta-ai.io/ko*
 // @match        https://zeta-ai.io/ko/rooms/*
 // @match        https://zeta-ai.io/*/rooms/*
 // @grant        GM_setValue
