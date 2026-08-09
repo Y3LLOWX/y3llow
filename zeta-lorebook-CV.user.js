@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Zeta Lorebook One-Click Copy & Paste Tool (Bug Fixed)
+// @name         Zeta Lorebook One-Click Copy & Paste Tool (Fixed Top Bar)
 // @namespace    http://tampermonkey.net/
-// @version      2.3
-// @description  로어북 항목 접기/펴기 시 툴바가 증식하는 버그 수정 버전
+// @version      2.4
+// @description  로어북 항목 최상단에 복사/붙여넣기 툴바 고정 배치
 // @match        https://zeta-ai.io/ko
 // @match        https://zeta-ai.io/ko/*
 // @match        https://zeta-ai.io/ko/creator-center*
@@ -77,37 +77,29 @@
         if (contentInput) setInputValue(contentInput, parsed.content || '');
     }
 
-    // UI 툴바 주입
+    // UI 툴바 주입 (로어북 폼 최상단 고정)
     function injectToolbars() {
         const forms = document.querySelectorAll('[data-sentry-component="LorebookItemEditForm"]');
 
         forms.forEach((form) => {
-            const rowContainer = form.closest('[data-sentry-component="LorebookItemRow"]');
-            if (!rowContainer) return;
-
-            const headerContainer = rowContainer.querySelector('.relative.flex.w-full.flex-row.items-start');
-            if (!headerContainer) return;
-
-            // 이미 동일한 헤더에 툴바가 존재하는지 검사 및 중복 툴바 정리
-            const existingToolbars = headerContainer.querySelectorAll('.zeta-lorebook-toolbar');
+            // 이미 최상단에 툴바가 존재하는지 검사 및 중복 제거
+            const existingToolbars = form.querySelectorAll(':scope > .zeta-lorebook-toolbar');
             if (existingToolbars.length > 0) {
-                // 1개 이상 존재하면 첫 번째만 남기고 나머지는 제거 (증식 방지)
                 for (let i = 1; i < existingToolbars.length; i++) {
                     existingToolbars[i].remove();
                 }
-                return; // 이미 정리가 끝났고 정상 툴바가 1개 존재하므로 생성 중단
+                return;
             }
 
             // 툴바 버튼 그룹 생성
             const toolbar = document.createElement('div');
-            // 식별용 전용 클래스(zeta-lorebook-toolbar) 추가
-            toolbar.className = 'zeta-lorebook-toolbar z-20 flex flex-row items-center gap-1.5 ml-auto mr-2';
+            toolbar.className = 'zeta-lorebook-toolbar flex flex-row items-center justify-end gap-2 mb-3 pb-2 border-b border-white/10 w-full';
 
             // 1. 복사 버튼
             const copyBtn = document.createElement('button');
             copyBtn.type = 'button';
             copyBtn.innerText = '📋 복사';
-            copyBtn.className = 'body12 px-2 py-1 rounded-6 bg-white/10 hover:bg-white/20 text-white transition-colors font-medium';
+            copyBtn.className = 'body12 px-2.5 py-1.5 rounded-6 bg-white/10 hover:bg-white/20 text-white transition-colors font-medium cursor-pointer';
             copyBtn.onclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -129,7 +121,7 @@
             const pasteBtn = document.createElement('button');
             pasteBtn.type = 'button';
             pasteBtn.innerText = '📥 싹다 붙여넣기';
-            pasteBtn.className = 'body12 px-2 py-1 rounded-6 bg-primary-500/20 hover:bg-primary-500/30 text-primary-300 transition-colors font-medium';
+            pasteBtn.className = 'body12 px-2.5 py-1.5 rounded-6 bg-primary-500/20 hover:bg-primary-500/30 text-primary-300 transition-colors font-medium cursor-pointer';
             pasteBtn.onclick = async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -158,16 +150,12 @@
             toolbar.appendChild(copyBtn);
             toolbar.appendChild(pasteBtn);
 
-            const deleteBtn = headerContainer.querySelector('button[data-sentry-element="IconButton"]');
-            if (deleteBtn) {
-                headerContainer.insertBefore(toolbar, deleteBtn);
-            } else {
-                headerContainer.appendChild(toolbar);
-            }
+            // 폼(Form) 요소의 최상단(firstElementChild 전)에 삽입
+            form.insertBefore(toolbar, form.firstChild);
         });
     }
 
-    // Observer 등록 (중복 실행 디바운싱 적용)
+    // Observer 등록 (디바운싱 적용)
     let isPending = false;
     const observer = new MutationObserver(() => {
         if (!isPending) {
