@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      4.1
+// @version      4.2
 // @description  NovelAI 이미지를 원본 해상도 유지, EXIF/프롬프트 완전 제거 후 15자리 랜덤 파일명으로 지정 폴더에 직접 저장 (PNG/JPG/WebP)
 // @author       You
 // @match        https://novelai.net/image*
@@ -41,30 +41,34 @@
             background: rgba(20, 20, 30, 0.88);
             backdrop-filter: blur(8px);
             border: 1px solid rgba(255, 255, 255, 0.18);
-            padding: 8px 12px;
+            padding: 8px;
             border-radius: 12px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
             display: flex;
-            align-items: center;
-            gap: 8px;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 6px;
             font-family: sans-serif;
             color: #fff;
             user-select: none;
+            width: 70px;
         `;
 
         loadSavedPosition(toolbar);
 
         const dragHandle = document.createElement('span');
-        dragHandle.innerText = '⣿';
+        dragHandle.innerText = '⣿⣿';
         dragHandle.title = '드래그하여 이동 (Ctrl + Enter로 위치 초기화)';
         dragHandle.style.cssText = `
             cursor: grab;
-            font-size: 16px;
+            font-size: 14px;
             color: #aaa;
-            padding: 2px 4px;
+            padding: 2px 0;
+            text-align: center;
+            line-height: 1;
         `;
 
-        // 폴더 선택 버튼 생성 (PNG 왼쪽 배치)
+        // 폴더 선택 버튼 생성
         const folderBtn = document.createElement('button');
         folderBtn.id = 'nai-folder-btn';
         folderBtn.innerText = '📁 폴더';
@@ -73,16 +77,17 @@
             background: #475569;
             color: #fff;
             border: none;
-            padding: 6px 10px;
+            padding: 6px 4px;
             border-radius: 6px;
             font-weight: bold;
             font-size: 12px;
             cursor: pointer;
             transition: transform 0.1s, filter 0.2s, background 0.2s;
             white-space: nowrap;
-            max-width: 120px;
+            width: 100%;
             overflow: hidden;
             text-overflow: ellipsis;
+            text-align: center;
         `;
         folderBtn.onmouseover = () => folderBtn.style.filter = 'brightness(1.2)';
         folderBtn.onmouseout = () => folderBtn.style.filter = 'brightness(1.0)';
@@ -116,12 +121,14 @@
                 background: ${color};
                 color: #fff;
                 border: none;
-                padding: 6px 10px;
+                padding: 6px 4px;
                 border-radius: 6px;
                 font-weight: bold;
                 font-size: 12px;
                 cursor: pointer;
                 transition: transform 0.1s, filter 0.2s;
+                width: 100%;
+                text-align: center;
             `;
             btn.onmouseover = () => btn.style.filter = 'brightness(1.2)';
             btn.onmouseout = () => btn.style.filter = 'brightness(1.0)';
