@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      4.2
+// @version      4.3
 // @description  NovelAI 이미지를 원본 해상도 유지, EXIF/프롬프트 완전 제거 후 15자리 랜덤 파일명으로 지정 폴더에 직접 저장 (PNG/JPG/WebP)
 // @author       You
 // @match        https://novelai.net/image*
@@ -14,6 +14,65 @@
 
     const STORAGE_KEY_POS = 'nai_dl_toolbar_pos';
     let targetDirectoryHandle = null; // 사용자가 선택한 저장 폴더 핸들
+
+    // 다운로드 피드(토스트 팝업) 생성 함수
+    function showDownloadToast(message) {
+        let toastContainer = document.getElementById('nai-toast-container');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'nai-toast-container';
+            toastContainer.style.cssText = `
+                position: fixed;
+                bottom: 24px;
+                right: 24px;
+                z-index: 1000000;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                pointer-events: none;
+                font-family: sans-serif;
+            `;
+            document.body.appendChild(toastContainer);
+        }
+
+        const toast = document.createElement('div');
+        toast.innerText = message;
+        toast.style.cssText = `
+            background: rgba(20, 20, 30, 0.92);
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(6px);
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            pointer-events: auto;
+            max-width: 360px;
+            word-break: break-all;
+        `;
+
+        toastContainer.appendChild(toast);
+
+        // 페이드 인
+        requestAnimationFrame(() => {
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateY(0)';
+        });
+
+        // 3초 후 페이드 아웃 및 제거
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(10px)';
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 250);
+        }, 3000);
+    }
 
     // 15자리 랜덤 숫자 문자열 생성
     function generate15DigitRandomNumber() {
@@ -346,6 +405,7 @@
                         const writable = await fileHandle.createWritable();
                         await writable.write(blob);
                         await writable.close();
+                        showDownloadToast(`/${targetDirectoryHandle.name} 경로로 '${randomFileName}'이 다운로드 되었습니다.`);
                         return;
                     } catch (dirErr) {
                         console.warn('지정 폴더 저장 실패, 일반 다운로드로 전환:', dirErr);
@@ -360,6 +420,8 @@
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
+
+                showDownloadToast(`/기본 다운로드 경로로 '${randomFileName}'이 다운로드 되었습니다.`);
 
                 setTimeout(() => URL.revokeObjectURL(url), 1000);
             }, mimeType, quality);
