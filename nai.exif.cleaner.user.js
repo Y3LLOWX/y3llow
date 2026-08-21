@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  NovelAI 이미지를 원본 해상도 유지, EXIF/프롬프트 완전 제거 후 15자리 랜덤 파일명으로 지정 폴더에 직접 저장 (PNG/JPG/WebP)
 // @author       You
 // @match        https://novelai.net/image*
@@ -68,7 +68,7 @@
         const folderBtn = document.createElement('button');
         folderBtn.id = 'nai-folder-btn';
         folderBtn.innerText = '📁 폴더';
-        folderBtn.title = '저장할 폴더 선택 (선택 시 해당 폴더로 자동 저장)';
+        folderBtn.title = '저장할 폴더 선택 (다운로드/문서 폴더 안의 하위 폴더를 권장합니다)';
         folderBtn.style.cssText = `
             background: #475569;
             color: #fff;
@@ -91,7 +91,7 @@
 
         folderBtn.addEventListener('click', async () => {
             if (!window.showDirectoryPicker) {
-                alert('사용 중인 브라우저가 직접 폴더 저장(File System Access API)을 지원하지 않습니다. Chrome/Edge 등을 이용해주세요.');
+                alert('사용 중인 브라우저가 직접 폴더 저장을 지원하지 않습니다.');
                 return;
             }
             try {
@@ -100,7 +100,9 @@
                 folderBtn.title = `저장 폴더: ${targetDirectoryHandle.name} (클릭하여 변경)`;
                 folderBtn.style.background = '#6366f1';
             } catch (err) {
-                if (err.name !== 'AbortError') {
+                if (err.name === 'SecurityError' || err.message?.includes('system')) {
+                    alert("⚠️ 보안상 '다운로드'나 '문서' 루트 폴더는 직접 선택할 수 없습니다.\n\n해당 폴더 안에 새 폴더(예: '다운로드/NAI')를 만들어 그 하위 폴더를 선택해주세요!");
+                } else if (err.name !== 'AbortError') {
                     console.error('폴더 선택 오류:', err);
                 }
             }
@@ -258,7 +260,7 @@
         return bestElement;
     }
 
-    // 5. EXIF/프롬프트 완전 제거 및 저장 (지정 폴더 직접 저장 or 기본 다운로드)
+    // 5. EXIF/프롬프트 완전 제거 및 저장
     async function downloadCleanImage(format, btn) {
         if (btn && btn.dataset.busy === '1') return;
 
@@ -339,7 +341,7 @@
                         await writable.close();
                         return;
                     } catch (dirErr) {
-                        console.warn('지정 폴더 저장 실패(권한 만료 등), 일반 다운로드로 전환:', dirErr);
+                        console.warn('지정 폴더 저장 실패, 일반 다운로드로 전환:', dirErr);
                     }
                 }
 
