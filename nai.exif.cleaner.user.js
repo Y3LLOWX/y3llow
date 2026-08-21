@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         NovelAI EXIF 제거기
+// @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      3.5
-// @description  NovelAI 이미지를 원본 해상도 유지, EXIF/프롬프트 완전 제거 후 15자리 랜덤 파일명으로 다운로드 (PNG/JPG/WebP)
+// @version      4.0
+// @description  NovelAI 이미지를 원본 해상도 유지, EXIF/프롬프트 완전 제거 후 15자리 랜덤 파일명으로 지정 폴더에 직접 저장 (PNG/JPG/WebP)
 // @author       You
 // @match        https://novelai.net/image*
 // @grant        none
@@ -13,6 +13,7 @@
     'use strict';
 
     const STORAGE_KEY_POS = 'nai_dl_toolbar_pos';
+    let targetDirectoryHandle = null; // 사용자가 선택한 저장 폴더 핸들
 
     // 15자리 랜덤 숫자 문자열 생성
     function generate15DigitRandomNumber() {
@@ -27,7 +28,7 @@
         return result;
     }
 
-    // 1. 툴바 UI 생성 (지정된 디자인 유지)
+    // 1. 툴바 UI 생성
     function createToolbar() {
         if (document.getElementById('nai-dl-toolbar')) return;
 
@@ -63,6 +64,48 @@
             padding: 2px 4px;
         `;
 
+        // 폴더 선택 버튼 생성 (PNG 왼쪽 배치)
+        const folderBtn = document.createElement('button');
+        folderBtn.id = 'nai-folder-btn';
+        folderBtn.innerText = '📁 폴더';
+        folderBtn.title = '저장할 폴더 선택 (선택 시 해당 폴더로 자동 저장)';
+        folderBtn.style.cssText = `
+            background: #475569;
+            color: #fff;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 12px;
+            cursor: pointer;
+            transition: transform 0.1s, filter 0.2s, background 0.2s;
+            white-space: nowrap;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        `;
+        folderBtn.onmouseover = () => folderBtn.style.filter = 'brightness(1.2)';
+        folderBtn.onmouseout = () => folderBtn.style.filter = 'brightness(1.0)';
+        folderBtn.onmousedown = () => folderBtn.style.transform = 'scale(0.95)';
+        folderBtn.onmouseup = () => folderBtn.style.transform = 'scale(1.0)';
+
+        folderBtn.addEventListener('click', async () => {
+            if (!window.showDirectoryPicker) {
+                alert('사용 중인 브라우저가 직접 폴더 저장(File System Access API)을 지원하지 않습니다. Chrome/Edge 등을 이용해주세요.');
+                return;
+            }
+            try {
+                targetDirectoryHandle = await window.showDirectoryPicker();
+                folderBtn.innerText = `📁 ${targetDirectoryHandle.name}`;
+                folderBtn.title = `저장 폴더: ${targetDirectoryHandle.name} (클릭하여 변경)`;
+                folderBtn.style.background = '#6366f1';
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error('폴더 선택 오류:', err);
+                }
+            }
+        });
+
         function createBtn(label, color, format) {
             const btn = document.createElement('button');
             btn.innerText = label;
@@ -92,6 +135,7 @@
         const webpBtn = createBtn('WebP', '#10b981', 'webp');
 
         toolbar.appendChild(dragHandle);
+        toolbar.appendChild(folderBtn);
         toolbar.appendChild(pngBtn);
         toolbar.appendChild(jpgBtn);
         toolbar.appendChild(webpBtn);
@@ -185,7 +229,7 @@
         }
     });
 
-    // 4. 화면 중앙 메인 이미지/캔버스 요소 탐색 (정상 작동 검증 로직)
+    // 4. 화면 중앙 메인 이미지/캔버스 요소 탐색
     function getCenterImageElement() {
         const candidates = Array.from(document.querySelectorAll('img, canvas'));
         const screenCenterX = window.innerWidth / 2;
@@ -197,9 +241,7 @@
         for (const el of candidates) {
             const rect = el.getBoundingClientRect();
 
-            // 썸네일 바 및 UI 아이콘 제외 (100px 미만)
             if (rect.width < 100 || rect.height < 100) continue;
-            // 뷰포트 영역 바깥 요소 제외
             if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) continue;
 
             const elCenterX = rect.left + rect.width / 2;
@@ -216,7 +258,7 @@
         return bestElement;
     }
 
-    // 5. EXIF/프롬프트 완전 제거 및 다운로드 처리 (새 Canvas에 순수 픽셀 재렌더링)
+    // 5. EXIF/프롬프트 완전 제거 및 저장 (지정 폴더 직접 저장 or 기본 다운로드)
     async function downloadCleanImage(format, btn) {
         if (btn && btn.dataset.busy === '1') return;
 
@@ -249,7 +291,6 @@
         }
 
         try {
-            // 순수 픽셀만 담을 새 캔버스 생성 -> 모든 메타데이터(EXIF, tEXt, iTXt 등) 영구 소멸
             const cleanCanvas = document.createElement('canvas');
             cleanCanvas.width = width;
             cleanCanvas.height = height;
@@ -281,17 +322,31 @@
                 quality = 1.0;
             }
 
-            cleanCanvas.toBlob(blob => {
+            cleanCanvas.toBlob(async (blob) => {
                 if (!blob) {
                     alert('이미지 변환에 실패했습니다.');
                     return;
                 }
 
+                const randomFileName = `${generate15DigitRandomNumber()}.${format}`;
+
+                // 1순위: 선택된 대상 폴더가 있으면 해당 폴더에 파일 직접 작성
+                if (targetDirectoryHandle) {
+                    try {
+                        const fileHandle = await targetDirectoryHandle.getFileHandle(randomFileName, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        return;
+                    } catch (dirErr) {
+                        console.warn('지정 폴더 저장 실패(권한 만료 등), 일반 다운로드로 전환:', dirErr);
+                    }
+                }
+
+                // 2순위 (폴더 미지정/오류 시): 기존 브라우저 다운로드 방식
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
-                const randomFileName = generate15DigitRandomNumber();
-
-                link.download = `${randomFileName}.${format}`;
+                link.download = randomFileName;
                 link.href = url;
                 document.body.appendChild(link);
                 link.click();
