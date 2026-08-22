@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      4.3
+// @version      4.4
 // @description  NovelAI 이미지를 원본 해상도 유지, EXIF/프롬프트 완전 제거 후 15자리 랜덤 파일명으로 지정 폴더에 직접 저장 (PNG/JPG/WebP)
 // @author       You
 // @match        https://novelai.net/image*
@@ -13,7 +13,54 @@
     'use strict';
 
     const STORAGE_KEY_POS = 'nai_dl_toolbar_pos';
+    const DB_NAME = 'nai_dir_storage_db';
+    const STORE_NAME = 'handles';
+    const HANDLE_KEY = 'target_dir_handle';
     let targetDirectoryHandle = null; // 사용자가 선택한 저장 폴더 핸들
+
+    // --- IndexedDB 핸들 저장/로드 유틸리티 ---
+    function openDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, 1);
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    db.createObjectStore(STORE_NAME);
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function saveDirectoryHandle(handle) {
+        try {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).put(handle, HANDLE_KEY);
+            return new Promise((resolve, reject) => {
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        } catch (e) {
+            console.error('디렉토리 핸들 저장 실패:', e);
+        }
+    }
+
+    async function loadSavedDirectoryHandle() {
+        try {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, 'readonly');
+            const request = tx.objectStore(STORE_NAME).get(HANDLE_KEY);
+            return new Promise((resolve) => {
+                request.onsuccess = () => resolve(request.result || null);
+                request.onerror = () => resolve(null);
+            });
+        } catch (e) {
+            console.error('디렉토리 핸들 불러오기 실패:', e);
+            return null;
+        }
+    }
 
     // 다운로드 피드(토스트 팝업) 생성 함수
     function showDownloadToast(message) {
@@ -88,7 +135,7 @@
     }
 
     // 1. 툴바 UI 생성
-    function createToolbar() {
+    async function createToolbar() {
         if (document.getElementById('nai-dl-toolbar')) return;
 
         const toolbar = document.createElement('div');
@@ -153,6 +200,17 @@
         folderBtn.onmousedown = () => folderBtn.style.transform = 'scale(0.95)';
         folderBtn.onmouseup = () => folderBtn.style.transform = 'scale(1.0)';
 
+        // 저장된 폴더 핸들이 있으면 불러와 적용
+        if (!targetDirectoryHandle) {
+            const savedHandle = await loadSavedDirectoryHandle();
+            if (savedHandle) {
+                targetDirectoryHandle = savedHandle;
+                folderBtn.innerText = `📁 ${targetDirectoryHandle.name}`;
+                folderBtn.title = `저장 폴더: ${targetDirectoryHandle.name} (클릭하여 변경)`;
+                folderBtn.style.background = '#6366f1';
+            }
+        }
+
         folderBtn.addEventListener('click', async () => {
             if (!window.showDirectoryPicker) {
                 alert('사용 중인 브라우저가 직접 폴더 저장을 지원하지 않습니다.');
@@ -160,6 +218,7 @@
             }
             try {
                 targetDirectoryHandle = await window.showDirectoryPicker();
+                await saveDirectoryHandle(targetDirectoryHandle);
                 folderBtn.innerText = `📁 ${targetDirectoryHandle.name}`;
                 folderBtn.title = `저장 폴더: ${targetDirectoryHandle.name} (클릭하여 변경)`;
                 folderBtn.style.background = '#6366f1';
@@ -401,6 +460,17 @@
                 // 1순위: 선택된 대상 폴더가 있으면 해당 폴더에 파일 직접 작성
                 if (targetDirectoryHandle) {
                     try {
+                        // 새로고침 후 권한이 만료된 경우 재요청
+                        if (targetDirectoryHandle.queryPermission) {
+                            const status = await targetDirectoryHandle.queryPermission({ mode: 'readwrite' });
+                            if (status !== 'granted') {
+                                const requestStatus = await targetDirectoryHandle.requestPermission({ mode: 'readwrite' });
+                                if (requestStatus !== 'granted') {
+                                    throw new Error('폴더 접근 권한이 승인되지 않았습니다.');
+                                }
+                            }
+                        }
+
                         const fileHandle = await targetDirectoryHandle.getFileHandle(randomFileName, { create: true });
                         const writable = await fileHandle.createWritable();
                         await writable.write(blob);
