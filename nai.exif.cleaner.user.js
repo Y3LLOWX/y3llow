@@ -70,8 +70,8 @@
             toastContainer.id = 'nai-toast-container';
             toastContainer.style.cssText = `
                 position: fixed;
-                bottom: 24px;
-                right: 24px;
+                top: 24px;
+                right: 145px;
                 z-index: 1000000;
                 display: flex;
                 flex-direction: column;
@@ -94,7 +94,7 @@
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
             backdrop-filter: blur(6px);
             opacity: 0;
-            transform: translateY(10px);
+            transform: translateY(-10px);
             transition: opacity 0.25s ease, transform 0.25s ease;
             pointer-events: auto;
             max-width: 360px;
@@ -112,7 +112,7 @@
         // 3초 후 페이드 아웃 및 제거
         setTimeout(() => {
             toast.style.opacity = '0';
-            toast.style.transform = 'translateY(10px)';
+            toast.style.transform = 'translateY(-10px)';
             setTimeout(() => {
                 if (toast.parentNode) {
                     toast.parentNode.removeChild(toast);
