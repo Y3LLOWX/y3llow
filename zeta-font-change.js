@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Zeta AI - 채팅방 글씨체 조절기
+// @name         Zeta AI - 채팅방 글씨체 조절기 (드래그 지원)
 // @namespace    http://tampermonkey.net/
-// @version      2.3
-// @description  제타 AI 채팅방의 글씨체(폰트)를 경기천년제목, 마비옛체, 메이플스토리 L, 배민 연성, 굴림, KoPub 바탕, 나눔명조 등으로 자유롭게 변경합니다.
+// @version      2.4
+// @description  제타 AI 채팅방의 글씨체 변경 및 설정창 드래그 이동/위치 기억/Ctrl+Enter 중앙 복귀 지원
 // @author       You
 // @match        https://zeta-ai.io/ko*
 // @match        https://zeta-ai.io/ko/rooms/*
@@ -19,6 +19,7 @@
     // 1. 지원 폰트 목록 및 기본 설정
     // ==========================================
     const STORAGE_KEY = 'zeta_custom_font_settings_v3';
+    const POS_STORAGE_KEY = 'zeta_custom_modal_pos_v1';
 
     const FONTS = [
         {
@@ -68,6 +69,7 @@
     };
 
     let settings = Object.assign({}, DEFAULT_SETTINGS, GM_getValue(STORAGE_KEY, {}));
+    let modalPos = GM_getValue(POS_STORAGE_KEY, null); // { top, left } 저장용
     let observerTimer = null;
 
     // ==========================================
@@ -164,7 +166,93 @@
     }
 
     // ==========================================
-    // 4. 글씨체 설정 모달 UI 생성
+    // 4. 모달 위치 제어 (중앙 복귀 및 저장 적용)
+    // ==========================================
+    function applyModalPosition(modal) {
+        if (modalPos && typeof modalPos.top === 'number' && typeof modalPos.left === 'number') {
+            modal.style.top = `${modalPos.top}px`;
+            modal.style.left = `${modalPos.left}px`;
+            modal.style.transform = 'none';
+        } else {
+            // 위치 저장값이 없으면 화면 중앙 기본 배치
+            modal.style.top = '50%';
+            modal.style.left = '50%';
+            modal.style.transform = 'translate(-50%, -50%)';
+        }
+    }
+
+    function resetModalToCenter() {
+        const modal = document.getElementById('zeta-font-modal');
+        modalPos = null;
+        GM_setValue(POS_STORAGE_KEY, null);
+
+        if (modal) {
+            applyModalPosition(modal);
+        }
+    }
+
+    // ==========================================
+    // 5. 드래그 앤 드롭 바인딩
+    // ==========================================
+    function makeDraggable(modal, handle) {
+        let isDragging = false;
+        let startX = 0, startY = 0;
+        let initialLeft = 0, initialTop = 0;
+
+        handle.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'BUTTON') return; // 닫기 버튼 클릭 시 드래그 방지
+
+            isDragging = true;
+            const rect = modal.getBoundingClientRect();
+
+            // transform 스타일 해제 후 고정 픽셀 좌표로 변환
+            modal.style.transform = 'none';
+            modal.style.left = `${rect.left}px`;
+            modal.style.top = `${rect.top}px`;
+
+            startX = e.clientX;
+            startY = e.clientY;
+            initialLeft = rect.left;
+            initialTop = rect.top;
+
+            document.body.style.userSelect = 'none'; // 드래그 중 텍스트 선택 방지
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+
+            let nextLeft = initialLeft + deltaX;
+            let nextTop = initialTop + deltaY;
+
+            // 화면 밖으로 완전히 나가지 않도록 경계 제한
+            const minX = 0;
+            const minY = 0;
+            const maxX = window.innerWidth - modal.offsetWidth;
+            const maxY = window.innerHeight - modal.offsetHeight;
+
+            nextLeft = Math.max(minX, Math.min(nextLeft, maxX));
+            nextTop = Math.max(minY, Math.min(nextTop, maxY));
+
+            modal.style.left = `${nextLeft}px`;
+            modal.style.top = `${nextTop}px`;
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            document.body.style.userSelect = '';
+
+            const rect = modal.getBoundingClientRect();
+            modalPos = { top: rect.top, left: rect.left };
+            GM_setValue(POS_STORAGE_KEY, modalPos);
+        });
+    }
+
+    // ==========================================
+    // 6. 글씨체 설정 모달 UI 생성
     // ==========================================
     function createFontModal() {
         if (document.getElementById('zeta-font-modal')) return;
@@ -174,9 +262,6 @@
         modal.style.cssText = `
             display: none;
             position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
             width: 320px;
             max-height: 80vh;
             background: #18181b;
@@ -192,6 +277,8 @@
             gap: 14px;
         `;
 
+        applyModalPosition(modal);
+
         const optionsHtml = FONTS.map(font => `
             <label style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: rgba(255, 255, 255, 0.04); border-radius: 8px; cursor: pointer; border: 1px solid ${settings.fontId === font.id ? '#3b82f6' : 'rgba(255, 255, 255, 0.08)'};">
                 <span style="font-family: ${font.family}; font-size: 14px; color: ${settings.fontId === font.id ? '#60a5fa' : '#e4e4e7'};">
@@ -202,8 +289,9 @@
         `).join('');
 
         modal.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;">
-                <div style="display: flex; align-items: center; gap: 6px;">
+            <!-- 상단 헤더 (드래그 핸들) -->
+            <div id="zeta-font-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; cursor: grab; user-select: none;">
+                <div style="display: flex; align-items: center; gap: 6px; pointer-events: none;">
                     <span style="font-size: 16px;">🔤</span>
                     <span style="font-weight: 600; font-size: 14px; color: #60a5fa;">채팅 글씨체 설정</span>
                 </div>
@@ -215,18 +303,27 @@
                 ${optionsHtml}
             </div>
 
-            <!-- 하단 버튼 -->
-            <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">
+            <!-- 하단 버튼 및 안내 툴팁 -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                <span style="color: #71717a; font-size: 11px;">중앙 정렬: Ctrl + Enter</span>
                 <button id="zeta-font-reset" style="background: rgba(255, 255, 255, 0.08); color: #a1a1aa; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 11px;">기본 글씨체로 복원</button>
             </div>
         `;
 
         document.body.appendChild(modal);
 
+        // 드래그 기능 연결
+        const header = document.getElementById('zeta-font-header');
+        header.addEventListener('mousedown', () => { header.style.cursor = 'grabbing'; });
+        window.addEventListener('mouseup', () => { header.style.cursor = 'grab'; });
+        makeDraggable(modal, header);
+
+        // 닫기 버튼
         document.getElementById('zeta-font-close').addEventListener('click', () => {
             modal.style.display = 'none';
         });
 
+        // 라디오 버튼 이벤트
         const radios = modal.querySelectorAll('input[name="zeta-font-radio"]');
         radios.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -237,6 +334,7 @@
             });
         });
 
+        // 폰트 초기화
         document.getElementById('zeta-font-reset').addEventListener('click', () => {
             settings.fontId = DEFAULT_SETTINGS.fontId;
             GM_setValue(STORAGE_KEY, settings);
@@ -261,12 +359,28 @@
         createFontModal();
         const modal = document.getElementById('zeta-font-modal');
         if (modal) {
-            modal.style.display = modal.style.display === 'none' || !modal.style.display ? 'flex' : 'none';
+            const isHidden = modal.style.display === 'none' || !modal.style.display;
+            modal.style.display = isHidden ? 'flex' : 'none';
+            if (isHidden) {
+                applyModalPosition(modal);
+            }
         }
     }
 
     // ==========================================
-    // 5. DOM 감지 및 초기화
+    // 7. 글로벌 단축키 (Ctrl + Enter) 등록
+    // ==========================================
+    function registerShortcuts() {
+        window.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                resetModalToCenter();
+            }
+        });
+    }
+
+    // ==========================================
+    // 8. DOM 감지 및 초기화
     // ==========================================
     function observeZeta() {
         const observer = new MutationObserver(() => {
@@ -283,8 +397,9 @@
         setTimeout(() => {
             applyCustomStyles();
             injectSidebarButton();
+            registerShortcuts();
             observeZeta();
-            console.log('[Zeta Font Selector] 로드 완료');
+            console.log('[Zeta Font Selector] 드래그 지원 버전 로드 완료');
         }, 1000);
     }
 
