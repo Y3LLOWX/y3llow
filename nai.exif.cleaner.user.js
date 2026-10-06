@@ -2,7 +2,7 @@
 // @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
 // @version      5.0
-// @description  NovelAI 이미지를 EXIF 완전 제거 후 15자리 랜덤 파일명으로 지정 폴더에 직접 저장
+// @description  NovelAI 이미지 생성 완료 즉시 EXIF 제거 후 자동 다운로드
 // @author       You
 // @match        https://novelai.net/image*
 // @grant        none
@@ -13,10 +13,20 @@
     'use strict';
 
     const STORAGE_KEY_POS = 'nai_dl_toolbar_pos';
+    const STORAGE_KEY_AUTO_COUNT = 'nai_dl_auto_count';
+    const STORAGE_KEY_AUTO_INTERVAL = 'nai_dl_auto_interval';
+    const STORAGE_KEY_TERMS_AGREED = 'nai_dl_terms_agreed'; // 이용약관 동의 여부 키
     const DB_NAME = 'nai_dir_storage_db';
     const STORE_NAME = 'handles';
     const HANDLE_KEY = 'target_dir_handle';
     let targetDirectoryHandle = null;
+
+    // 자동 생성 상태 변수
+    let isAutoGenerating = false;
+    let autoGenTargetCount = 0;
+    let autoGenCurrentCount = 0;
+    let autoGenInterval = parseFloat(localStorage.getItem(STORAGE_KEY_AUTO_INTERVAL)) || 2;
+    let selectedFormat = 'png';
 
     function openDB() {
         return new Promise((resolve, reject) => {
@@ -122,12 +132,10 @@
         }, 3000);
     }
 
-    // 커스텀 토스트 다이얼로그 (브라우저 alert/confirm 대신 UI 토스트 메시지 형태)
     function showToastConfirm(message) {
         return new Promise((resolve) => {
             const toastContainer = getToastContainer();
 
-            // 기존에 열려있던 확인 창이 있다면 모두 제거하고 Promise를 취소(false) 처리
             const existingConfirms = toastContainer.querySelectorAll('.nai-confirm-toast');
             existingConfirms.forEach(confirmEl => {
                 if (confirmEl.dataset.resolveFn) {
@@ -221,13 +229,150 @@
             toast.appendChild(textSpan);
             toast.appendChild(btnContainer);
 
-            // 항상 컨테이너의 맨 위(첫 번째 위치)에 삽입
             toastContainer.prepend(toast);
 
             requestAnimationFrame(() => {
                 toast.style.opacity = '1';
                 toast.style.transform = 'translateY(0)';
             });
+        });
+    }
+
+    // --- 이용약관 동의 모달 팝업 창 ---
+    function showTermsModal() {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.id = 'nai-terms-overlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                background: rgba(0, 0, 0, 0.75);
+                backdrop-filter: blur(5px);
+                z-index: 10000000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-family: sans-serif;
+            `;
+
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                background: #181825;
+                color: #f3f4f6;
+                width: 90%;
+                max-width: 780px;
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+                padding: 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+            `;
+
+            const title = document.createElement('h2');
+            title.innerText = '🔄 약관 동의';
+            title.style.cssText = `
+                margin: 0;
+                font-size: 18px;
+                font-weight: bold;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                padding-bottom: 10px;
+            `;
+
+            const contentBox = document.createElement('div');
+            contentBox.innerHTML = `
+            <h3 style="margin: 0 0 6px 0;">자동 배치 생성·다운로드 이용 안내</h3>
+            <p style="margin: 0 0 6px 0;">자동 배치 기능을 처음 실행하기 전에 아래 내용을 반드시 확인해 주세요.</p>
+            <ul style="padding-left: 20px; margin: 0 0 6px 0;">
+              <li style="margin-bottom: 3px;"><strong>생성 간격 설정:</strong> 처음 실행할 때 생성 간격을 반드시 <strong>2초 이상</strong>으로 설정해 주세요. 어떤 경우에도 <strong>1.5초 이하</strong>로 설정하여 실행하지 마세요.</li>
+              <li style="margin-bottom: 3px;"><strong>약관 준수:</strong> NovelAI 이용약관은 자동화 자체를 일률적으로 금지하는 것이 아니라, 서비스에서 정한 제한을 무시하거나 서버에 과도한 부하를 주는 자동화 이용을 금지하고 있습니다.</li>
+              <li><strong>계정 이용 책임:</strong> 자동화 기능을 통해 계정에서 발생하는 활동과 약관 위반으로 인한 불이익은 이용자 본인의 책임입니다.</li>
+            </ul>
+            <p style="margin: 0;">안전한 이용을 위해 위 사항을 준수해 주세요. 자세한 내용은 <a href="https://novelai.net/terms" target="_blank" style="color: #0066cc;">NovelAI 이용약관</a>을 참고하시기 바랍니다.</p>
+            `
+            contentBox.style.cssText = `
+                background: rgba(0, 0, 0, 0.3);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 12px;
+                font-size: 13px;
+                line-height: 1.2;
+                max-height: 520px;
+                overflow-y: auto;
+                color: #d1d5db;
+                white-space: pre-wrap;
+            `;
+
+            const agreementText = document.createElement('div');
+            agreementText.innerText = '위 내용을 확인했으며, 자동 배치 생성·다운로드 이용에 동의합니다.';
+            agreementText.style.cssText = `
+                font-size: 12px;
+                color: #a1a1aa;
+                text-align: center;
+                line-height: 1.4;
+            `;
+
+            const btnContainer = document.createElement('div');
+            btnContainer.style.cssText = `
+                display: flex;
+                gap: 10px;
+                justify-content: flex-end;
+                margin-top: 4px;
+            `;
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.innerText = '취소';
+            cancelBtn.style.cssText = `
+                flex: 1;
+                background: #475569;
+                color: #fff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: bold;
+                cursor: pointer;
+            `;
+
+            const acceptBtn = document.createElement('button');
+            acceptBtn.innerText = '동의하고 계속';
+            acceptBtn.style.cssText = `
+                flex: 1;
+                background: #6366f1;
+                color: #fff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: bold;
+                cursor: pointer;
+            `;
+
+            cancelBtn.onclick = () => {
+                document.body.removeChild(overlay);
+                resolve(false);
+            };
+
+            acceptBtn.onclick = () => {
+                localStorage.setItem(STORAGE_KEY_TERMS_AGREED, 'true');
+                document.body.removeChild(overlay);
+                resolve(true);
+            };
+
+            btnContainer.appendChild(cancelBtn);
+            btnContainer.appendChild(acceptBtn);
+
+            modal.appendChild(title);
+            modal.appendChild(contentBox);
+            modal.appendChild(agreementText);
+            modal.appendChild(btnContainer);
+            overlay.appendChild(modal);
+
+            document.body.appendChild(overlay);
         });
     }
 
@@ -265,7 +410,7 @@
             font-family: sans-serif;
             color: #fff;
             user-select: none;
-            width: 70px;
+            width: 90px;
         `;
 
         loadSavedPosition(toolbar);
@@ -293,7 +438,7 @@
             padding: 6px 4px;
             border-radius: 6px;
             font-weight: bold;
-            font-size: 12px;
+            font-size: 11px;
             cursor: pointer;
             transition: transform 0.1s, filter 0.2s, background 0.2s;
             white-space: nowrap;
@@ -304,8 +449,6 @@
         `;
         folderBtn.onmouseover = () => folderBtn.style.filter = 'brightness(1.2)';
         folderBtn.onmouseout = () => folderBtn.style.filter = 'brightness(1.0)';
-        folderBtn.onmousedown = () => folderBtn.style.transform = 'scale(0.95)';
-        folderBtn.onmouseup = () => folderBtn.style.transform = 'scale(1.0)';
 
         if (!targetDirectoryHandle) {
             const savedHandle = await loadSavedDirectoryHandle();
@@ -337,44 +480,358 @@
             }
         });
 
-        function createBtn(label, color, format) {
+        // --- 포맷 변경 탭 (PNG/JPG/WebP) ---
+        const formatContainer = document.createElement('div');
+        formatContainer.style.cssText = `display: flex; gap: 2px; justify-content: space-between;`;
+
+        const createFormatBtn = (fmt) => {
             const btn = document.createElement('button');
-            btn.innerText = label;
-            btn.title = `${label}로 메타데이터 완전 제거 후 다운로드`;
+            btn.innerText = fmt.toUpperCase();
             btn.style.cssText = `
-                background: ${color};
+                flex: 1;
+                background: ${selectedFormat === fmt ? '#6366f1' : '#334155'};
                 color: #fff;
                 border: none;
-                padding: 6px 4px;
-                border-radius: 6px;
+                padding: 4px 0;
+                border-radius: 4px;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 10px;
                 cursor: pointer;
-                transition: transform 0.1s, filter 0.2s;
-                width: 100%;
-                text-align: center;
             `;
-            btn.onmouseover = () => btn.style.filter = 'brightness(1.2)';
-            btn.onmouseout = () => btn.style.filter = 'brightness(1.0)';
-            btn.onmousedown = () => btn.style.transform = 'scale(0.95)';
-            btn.onmouseup = () => btn.style.transform = 'scale(1.0)';
-
-            btn.addEventListener('click', () => downloadCleanImage(format, btn));
+            btn.onclick = () => {
+                selectedFormat = fmt;
+                Array.from(formatContainer.children).forEach(child => child.style.background = '#334155');
+                btn.style.background = '#6366f1';
+            };
             return btn;
-        }
+        };
 
-        const pngBtn = createBtn('PNG', '#3b82f6', 'png');
-        const jpgBtn = createBtn('JPG', '#eab308', 'jpg');
-        const webpBtn = createBtn('WebP', '#10b981', 'webp');
+        const pngFmtBtn = createFormatBtn('png');
+        const jpgFmtBtn = createFormatBtn('jpg');
+        const webpFmtBtn = createFormatBtn('webp');
+
+        formatContainer.appendChild(pngFmtBtn);
+        formatContainer.appendChild(jpgFmtBtn);
+        formatContainer.appendChild(webpFmtBtn);
+
+        // --- 다운로드 수동 실행 버튼 ---
+        const manualDlBtn = document.createElement('button');
+        manualDlBtn.innerText = '⬇ 다운로드';
+        manualDlBtn.style.cssText = `
+            background: #3b82f6;
+            color: #fff;
+            border: none;
+            padding: 6px 4px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 11px;
+            cursor: pointer;
+            width: 100%;
+        `;
+        manualDlBtn.addEventListener('click', () => downloadCleanImage(selectedFormat, manualDlBtn));
+
+        // --- 구분선 ---
+        const hr = document.createElement('hr');
+        hr.style.cssText = 'border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 2px 0;';
+
+        // --- 약관 동의 철회 버튼 ---
+        const revokeTermsBtn = document.createElement('button');
+        revokeTermsBtn.id = 'nai-revoke-terms-btn';
+        revokeTermsBtn.innerText = '❌ 동의 철회';
+        revokeTermsBtn.title = '이용약관 동의 상태를 철회합니다.';
+        revokeTermsBtn.style.cssText = `
+            background: #dc2626;
+            color: #fff;
+            border: none;
+            padding: 4px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            display: ${localStorage.getItem(STORAGE_KEY_TERMS_AGREED) === 'true' ? 'block' : 'none'};
+        `;
+
+        revokeTermsBtn.addEventListener('click', () => {
+            if (confirm('이용약관 동의를 철회하시겠습니까?\n철회 시 자동 생성 사용 시 약관 동의가 다시 필요합니다.')) {
+                localStorage.removeItem(STORAGE_KEY_TERMS_AGREED);
+                revokeTermsBtn.style.display = 'none';
+                if (isAutoGenerating) {
+                    stopAutoGeneration('약관 동의 철회로 인해 중지됨');
+                }
+                showDownloadToast('❌ 이용약관 동의가 철회되었습니다.');
+            }
+        });
+
+        // --- 자동 연속 생성 컨트롤 ---
+        const autoControlContainer = document.createElement('div');
+        autoControlContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        `;
+
+        const countInputLabel = document.createElement('div');
+        countInputLabel.innerText = '자동 생성 개수';
+        countInputLabel.style.cssText = 'font-size: 10px; color: #ccc; text-align: center;';
+
+        const countInput = document.createElement('input');
+        countInput.type = 'number';
+        const savedCount = localStorage.getItem(STORAGE_KEY_AUTO_COUNT);
+        countInput.value = savedCount !== null ? savedCount : '4';
+        countInput.min = '1';
+        countInput.max = '999';
+        countInput.style.cssText = `
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #fff;
+            padding: 4px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-align: center;
+            width: 100%;
+            box-sizing: border-box;
+        `;
+
+        countInput.addEventListener('change', () => {
+            let val = parseInt(countInput.value, 10);
+            if (isNaN(val) || val < 1) {
+                val = 4;
+                countInput.value = '4';
+            }
+            localStorage.setItem(STORAGE_KEY_AUTO_COUNT, val.toString());
+        });
+
+        const autoStartBtn = document.createElement('button');
+        autoStartBtn.id = 'nai-auto-btn';
+        autoStartBtn.innerText = '▶ 자동 생성';
+        autoStartBtn.style.cssText = `
+            background: #10b981;
+            color: #fff;
+            border: none;
+            padding: 6px 4px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 11px;
+            cursor: pointer;
+            width: 100%;
+        `;
+
+        // --- 생성 간격 입력 폼 (최소 2초) ---
+        const intervalInputLabel = document.createElement('div');
+        intervalInputLabel.innerText = '생성 간격(초)';
+        intervalInputLabel.style.cssText = 'font-size: 10px; color: #ccc; text-align: center; margin-top: 2px;';
+
+        const intervalInput = document.createElement('input');
+        intervalInput.type = 'number';
+        const savedInterval = localStorage.getItem(STORAGE_KEY_AUTO_INTERVAL);
+        intervalInput.value = savedInterval !== null ? savedInterval : '2';
+        intervalInput.min = '2';
+        intervalInput.max = '3600';
+        intervalInput.step = '1';
+        intervalInput.title = '생성 간격 입력 (최소 2초)';
+        intervalInput.style.cssText = `
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #fff;
+            padding: 4px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-align: center;
+            width: 100%;
+            box-sizing: border-box;
+        `;
+
+        intervalInput.addEventListener('change', () => {
+            let val = parseFloat(intervalInput.value);
+            if (isNaN(val) || val < 2) {
+                val = 2;
+                showDownloadToast('생성 간격은 최소 2초 이상이어야 합니다.');
+            }
+            autoGenInterval = val;
+            localStorage.setItem(STORAGE_KEY_AUTO_INTERVAL, val.toString());
+        });
+
+        autoStartBtn.addEventListener('click', async () => {
+            if (isAutoGenerating) {
+                stopAutoGeneration('사용자에 의해 중지됨');
+            } else {
+                // 약관 동의 확인
+                const isAgreed = localStorage.getItem(STORAGE_KEY_TERMS_AGREED) === 'true';
+                if (!isAgreed) {
+                    const agreedNow = await showTermsModal();
+                    if (!agreedNow) return; // 취소 클릭 시 생성 중단
+                    revokeTermsBtn.style.display = 'block'; // 약관 동의 완료 시 철회 버튼 표시
+                }
+
+                const count = parseInt(countInput.value, 10);
+                let intervalVal = parseFloat(intervalInput.value);
+
+                if (isNaN(count) || count <= 0) {
+                    showDownloadToast('올바른 개수를 입력해 주세요.');
+                    return;
+                }
+
+                if (isNaN(intervalVal) || intervalVal < 2) {
+                    intervalVal = 2;
+                    intervalInput.value = '2';
+                    showDownloadToast('간격이 2초 미만이어서 2초로 자동 설정되었습니다.');
+                }
+
+                autoGenInterval = intervalVal;
+                startAutoGeneration(count);
+            }
+        });
+
+        autoControlContainer.appendChild(countInputLabel);
+        autoControlContainer.appendChild(countInput);
+        autoControlContainer.appendChild(autoStartBtn);
+        autoControlContainer.appendChild(intervalInputLabel);
+        autoControlContainer.appendChild(intervalInput);
 
         toolbar.appendChild(dragHandle);
         toolbar.appendChild(folderBtn);
-        toolbar.appendChild(pngBtn);
-        toolbar.appendChild(jpgBtn);
-        toolbar.appendChild(webpBtn);
+        toolbar.appendChild(formatContainer);
+        toolbar.appendChild(manualDlBtn);
+        toolbar.appendChild(hr);
+        toolbar.appendChild(revokeTermsBtn);
+        toolbar.appendChild(autoControlContainer);
 
         document.body.appendChild(toolbar);
         makeDraggable(toolbar, dragHandle);
+    }
+
+    // --- NAI Generate 버튼 감지 ---
+    function getNaiGenerateButton() {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        return buttons.find(b => {
+            const text = b.innerText.toLowerCase();
+            return text.includes('generate') || text.includes('생성');
+        });
+    }
+
+    // --- 자동 생성 제어 ---
+    async function startAutoGeneration(targetCount) {
+        if (!targetDirectoryHandle) {
+            showDownloadToast('⚠ 저장 폴더를 먼저 선택해 주세요!');
+            return;
+        }
+
+        const genBtn = getNaiGenerateButton();
+        if (!genBtn) {
+            showDownloadToast('NovelAI 생성 버튼을 찾을 수 없습니다.');
+            return;
+        }
+
+        isAutoGenerating = true;
+        autoGenTargetCount = targetCount;
+        autoGenCurrentCount = 0;
+
+        updateAutoButtonUI();
+        showDownloadToast(`🚀 ${targetCount}장 자동 생성 시작 (간격:${autoGenInterval}초)`);
+
+        runAutoStep();
+    }
+
+    function stopAutoGeneration(reason = '') {
+        isAutoGenerating = false;
+        updateAutoButtonUI();
+        if (reason) {
+            showDownloadToast(`⏹ 자동 생성 중단: ${reason}`);
+        }
+    }
+
+    function updateAutoButtonUI() {
+        const autoBtn = document.getElementById('nai-auto-btn');
+        if (!autoBtn) return;
+
+        if (isAutoGenerating) {
+            autoBtn.innerText = `■ 중지 (${autoGenCurrentCount}/${autoGenTargetCount})`;
+            autoBtn.style.background = '#ef4444';
+        } else {
+            autoBtn.innerText = '▶ 자동 생성';
+            autoBtn.style.background = '#10b981';
+        }
+    }
+
+    async function runAutoStep() {
+        if (!isAutoGenerating) return;
+
+        if (autoGenCurrentCount >= autoGenTargetCount) {
+            stopAutoGeneration('');
+            showDownloadToast(`🎉 총 ${autoGenTargetCount}장 자동 생성이 완료되었습니다!`);
+            return;
+        }
+
+        const genBtn = getNaiGenerateButton();
+        if (!genBtn || genBtn.disabled) {
+            setTimeout(runAutoStep, 1000);
+            return;
+        }
+
+        // 이전 이미지 상태 저장
+        const prevElement = getVisibleImageElements()[0];
+        const prevSrc = prevElement ? (prevElement.src || prevElement.toDataURL?.()) : null;
+
+        // 생성 버튼 클릭
+        genBtn.click();
+
+        // 1. 이미지가 완전히 새로 생성될 때까지 모니터링 및 대기
+        const isSuccess = await waitForNewImage(prevSrc);
+
+        if (isSuccess && isAutoGenerating) {
+            autoGenCurrentCount++;
+            updateAutoButtonUI();
+
+            // 2. 완성이 확인되는 즉시 EXIF 제거 및 즉시 다운로드
+            const currentImg = getVisibleImageElements()[0];
+            if (currentImg) {
+                try {
+                    const blob = await processImageToCleanBlob(currentImg, selectedFormat);
+                    const randomFileName = generate15DigitRandomNumber() + '.' + selectedFormat;
+                    await saveSingleBlob(blob, randomFileName);
+                    showDownloadToast(`[${autoGenCurrentCount}/${autoGenTargetCount}] '${randomFileName}' 저장 완료`);
+                } catch (e) {
+                    console.error('자동 저장 실패:', e);
+                }
+            }
+
+            // 3. 다운로드 완료 후, 지정한 초 제한(간격)만큼 대기한 다음 다시 다음 생성 진행
+            const delayMs = autoGenInterval * 1000;
+            setTimeout(runAutoStep, delayMs);
+
+        } else if (isAutoGenerating) {
+            // 생성 타임아웃 발생 시 재시도
+            setTimeout(runAutoStep, 1500);
+        }
+    }
+
+    // 이미지 완성 감지 함수 (버튼 비활성화 해제 + 이미지 변환 감지)
+    function waitForNewImage(prevSrc) {
+        return new Promise((resolve) => {
+            let attempts = 0;
+            const maxAttempts = 240; // 최대 120초 대기 (500ms * 240)
+
+            const interval = setInterval(() => {
+                attempts++;
+                const genBtn = getNaiGenerateButton();
+                const currentImg = getVisibleImageElements()[0];
+                const currentSrc = currentImg ? (currentImg.src || currentImg.toDataURL?.()) : null;
+
+                // 생성 버튼이 다시 활성화(disabled === false) 상태이고, 이미지 URL/Data가 변경되었을 때 완성으로 간주
+                const isBtnReady = genBtn && !genBtn.disabled;
+                const isImageChanged = currentSrc && currentSrc !== prevSrc;
+
+                if (isBtnReady && isImageChanged) {
+                    clearInterval(interval);
+                    // 렌더링 안정화를 위해 200ms 지연 후 완료 반환
+                    setTimeout(() => resolve(true), 200);
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(interval);
+                    resolve(false);
+                }
+            }, 500);
+        });
     }
 
     function resetPosition(element) {
@@ -568,10 +1025,9 @@
             return;
         }
 
-        // 브라우저 기본 confirm() 대신 토스트 알림 형태의 커스텀 대화상자 사용
         if (targetElements.length > 1) {
             const count = targetElements.length;
-            const confirmAll = await showToastConfirm(`\ ${count}장의 이미지가 감지되었습니다.\n ${format} 형태의 ${count}장의 이미지를 모두 다운로드하시겠습니까?`);
+            const confirmAll = await showToastConfirm(`${count}장의 이미지가 감지되었습니다.\n${format.toUpperCase()} 형태의 ${count}장의 이미지를 모두 다운로드하시겠습니까?`);
             if (!confirmAll) return;
         }
 
@@ -590,13 +1046,12 @@
 
                 await saveSingleBlob(blob, randomFileName);
 
-                showDownloadToast(`/지정된 '${targetDirectoryHandle.name}' 경로로 '${randomFileName}'이 다운로드 되었습니다.`);
+                showDownloadToast(`'${randomFileName}'이 다운로드 되었습니다.`);
 
                 if (targetElements.length > 1) {
                     await new Promise(r => setTimeout(r, 150));
                 }
             }
-
         } catch (error) {
             console.error('[Clean Downloader Error]', error);
             showDownloadToast('다운로드 처리 중 오류가 발생했습니다: ' + error.message);
@@ -608,6 +1063,6 @@
         }
     }
 
-    window.addEventListener('load', createToolbar);
-    setInterval(createToolbar, 1500);
+    // 툴바 초기화 실행
+    createToolbar();
 })();
