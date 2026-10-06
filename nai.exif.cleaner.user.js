@@ -1025,44 +1025,228 @@
             return;
         }
 
-        if (targetElements.length > 1) {
-            const count = targetElements.length;
-            const confirmAll = await showToastConfirm(`${count}장의 이미지가 감지되었습니다.\n${format.toUpperCase()} 형태의 ${count}장의 이미지를 모두 다운로드하시겠습니까?`);
-            if (!confirmAll) return;
-        }
-
-        if (btn) {
-            btn.dataset.busy = '1';
-            btn.style.opacity = '0.6';
-        }
-
-        try {
-            for (let i = 0; i < targetElements.length; i++) {
-                const el = targetElements[i];
-                const blob = await processImageToCleanBlob(el, format);
-
-                const randomNum = generate15DigitRandomNumber();
-                const randomFileName = randomNum + '.' + format;
-
+        // --- 이미지가 1장일 때: 바로 다운로드 ---
+        if (targetElements.length === 1) {
+            if (btn) {
+                btn.dataset.busy = '1';
+                btn.style.opacity = '0.6';
+            }
+            try {
+                const blob = await processImageToCleanBlob(targetElements[0], format);
+                const randomFileName = generate15DigitRandomNumber() + '.' + format;
                 await saveSingleBlob(blob, randomFileName);
-
                 showDownloadToast(`'${randomFileName}'이 다운로드 되었습니다.`);
-
-                if (targetElements.length > 1) {
-                    await new Promise(r => setTimeout(r, 150));
+            } catch (error) {
+                console.error('[Clean Downloader Error]', error);
+                showDownloadToast('다운로드 처리 중 오류가 발생했습니다: ' + error.message);
+            } finally {
+                if (btn) {
+                    btn.dataset.busy = '0';
+                    btn.style.opacity = '1.0';
                 }
             }
-        } catch (error) {
-            console.error('[Clean Downloader Error]', error);
-            showDownloadToast('다운로드 처리 중 오류가 발생했습니다: ' + error.message);
-        } finally {
-            if (btn) {
-                btn.dataset.busy = '0';
-                btn.style.opacity = '1.0';
-            }
+            return;
         }
+
+        // --- 이미지가 2장 이상일 때: 선택 다운로드 모달 창 띄우기 ---
+        showImageSelectionModal(targetElements, format, btn);
     }
 
+    // --- 선택 다운로드 모달 생성 함수 ---
+    function showImageSelectionModal(targetElements, initialFormat, triggerBtn) {
+        // 기존 선택 모달이 있다면 제거
+        const existingModal = document.getElementById('nai-img-select-modal');
+        if (existingModal) existingModal.remove();
+
+        let currentFormat = initialFormat;
+
+        // 모달 오버레이
+        const overlay = document.createElement('div');
+        overlay.id = 'nai-img-select-modal';
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center;
+            z-index: 999999; font-family: sans-serif;
+        `;
+
+        // 모달 본체
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            background: #1e293b; color: #fff; width: 500px; max-width: 90vw; max-height: 80vh;
+            border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
+        `;
+
+        // 상단 헤더
+        const header = document.createElement('div');
+        header.style.cssText = `display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;`;
+        header.innerHTML = `<span style="font-weight: bold; font-size: 14px;">📷 감지된 이미지 선택 (${targetElements.length}장)</span>`;
+
+        // 전체 선택 / 해제 컨트롤 영역
+        const selectCtrlRow = document.createElement('div');
+        selectCtrlRow.style.cssText = `display: flex; align-items: center; justify-content: space-between; font-size: 12px;`;
+
+        const selectAllContainer = document.createElement('label');
+        // 👇 [수정] line-height, letter-spacing, white-space 명시 지정
+        selectAllContainer.style.cssText = `
+            display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+            line-height: 1; letter-spacing: normal; white-space: nowrap; font-size: 12px;
+        `;
+
+        const selectAllCheckbox = document.createElement('input');
+        selectAllCheckbox.type = 'checkbox';
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.style.cssText = `width: 14px; height: 14px; cursor: pointer; accent-color: #6366f1; margin: 0;`;
+
+        selectAllContainer.appendChild(selectAllCheckbox);
+        selectAllContainer.appendChild(document.createTextNode('전체 선택 / 해제'));
+
+        // 모달 내 포맷 변경 탭
+        const formatTabContainer = document.createElement('div');
+        formatTabContainer.style.cssText = `display: flex; gap: 4px;`;
+        ['png', 'jpg', 'webp'].forEach(fmt => {
+            const fmtBtn = document.createElement('button');
+            fmtBtn.innerText = fmt.toUpperCase();
+            fmtBtn.style.cssText = `
+                background: ${fmt === currentFormat ? '#6366f1' : '#334155'}; color: #fff; border: none;
+                padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer;
+            `;
+            fmtBtn.onclick = () => {
+                currentFormat = fmt;
+                Array.from(formatTabContainer.children).forEach(child => child.style.background = '#334155');
+                fmtBtn.style.background = '#6366f1';
+            };
+            formatTabContainer.appendChild(fmtBtn);
+        });
+
+        selectCtrlRow.appendChild(selectAllContainer);
+        selectCtrlRow.appendChild(formatTabContainer);
+
+        // 이미지 아이템 목록 스크롤 영역
+        const listContainer = document.createElement('div');
+        listContainer.style.cssText = `
+            display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto;
+            padding-right: 4px; background: rgba(0,0,0,0.2); border-radius: 8px; padding: 8px;
+        `;
+
+        const itemCheckboxes = [];
+
+        targetElements.forEach((el, index) => {
+            const row = document.createElement('label');
+            // 👇 [수정] padding을 줄이고 flex 정렬을 밀착
+            row.style.cssText = `
+                display: flex; align-items: center; gap: 10px; background: #334155; padding: 6px 10px;
+                border-radius: 6px; cursor: pointer; transition: background 0.2s; user-select: none;
+            `;
+            row.onmouseover = () => row.style.background = '#475569';
+            row.onmouseout = () => row.style.background = '#334155';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = true;
+            // 👇 [수정/추가] 각 이미지 체크박스 크기 명시 지정 (width/height)
+            checkbox.style.cssText = `width: 15px; height: 15px; cursor: pointer; accent-color: #6366f1; flex-shrink: 0;`;
+
+            itemCheckboxes.push(checkbox);
+
+            // 썸네일 이미지 추출
+            const thumbImg = document.createElement('img');
+            thumbImg.style.cssText = `width: 44px; height: 44px; object-fit: cover; border-radius: 4px; background: #000; flex-shrink: 0;`;
+            if (el.tagName.toLowerCase() === 'img') {
+                thumbImg.src = el.src;
+            } else if (el.tagName.toLowerCase() === 'canvas') {
+                try { thumbImg.src = el.toDataURL(); } catch (e) { }
+            }
+
+            const labelText = document.createElement('span');
+            labelText.style.cssText = `font-size: 12px; flex: 1; word-break: break-all;`;
+            const width = el.naturalWidth || el.width || '?';
+            const height = el.naturalHeight || el.height || '?';
+            labelText.innerText = `이미지 #${index + 1} (${width}x${height}px)`;
+
+            row.appendChild(checkbox);
+            row.appendChild(thumbImg);
+            row.appendChild(labelText);
+            listContainer.appendChild(row);
+        });
+
+        // 전체 선택 토글 이벤트
+        selectAllCheckbox.addEventListener('change', () => {
+            itemCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+        });
+
+        // 하단 버튼 영역
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;`;
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.innerText = '취소';
+        cancelBtn.style.cssText = `
+            background: #475569; color: #fff; border: none; padding: 8px 16px; border-radius: 6px;
+            font-size: 12px; font-weight: bold; cursor: pointer;
+        `;
+        cancelBtn.onclick = () => overlay.remove();
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.innerText = '선택 다운로드';
+        downloadBtn.style.cssText = `
+            background: #3b82f6; color: #fff; border: none; padding: 8px 16px; border-radius: 6px;
+            font-size: 12px; font-weight: bold; cursor: pointer;
+        `;
+
+        downloadBtn.onclick = async () => {
+            const selectedIndices = itemCheckboxes
+                .map((cb, i) => cb.checked ? i : -1)
+                .filter(i => i !== -1);
+
+            if (selectedIndices.length === 0) {
+                alert('다운로드할 이미지를 최소 1개 이상 선택해주세요.');
+                return;
+            }
+
+            overlay.remove();
+
+            if (triggerBtn) {
+                triggerBtn.dataset.busy = '1';
+                triggerBtn.style.opacity = '0.6';
+            }
+
+            try {
+                for (let idx of selectedIndices) {
+                    const el = targetElements[idx];
+                    const blob = await processImageToCleanBlob(el, currentFormat);
+                    const randomNum = generate15DigitRandomNumber();
+                    const randomFileName = randomNum + '.' + currentFormat;
+
+                    await saveSingleBlob(blob, randomFileName);
+                    showDownloadToast(`'${randomFileName}'이 다운로드 되었습니다.`);
+
+                    if (selectedIndices.length > 1) {
+                        await new Promise(r => setTimeout(r, 150));
+                    }
+                }
+            } catch (error) {
+                console.error('[Clean Downloader Error]', error);
+                showDownloadToast('다운로드 처리 중 오류가 발생했습니다: ' + error.message);
+            } finally {
+                if (triggerBtn) {
+                    triggerBtn.dataset.busy = '0';
+                    triggerBtn.style.opacity = '1.0';
+                }
+            }
+        };
+
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(downloadBtn);
+
+        modal.appendChild(header);
+        modal.appendChild(selectCtrlRow);
+        modal.appendChild(listContainer);
+        modal.appendChild(btnRow);
+        overlay.appendChild(modal);
+
+        document.body.appendChild(overlay);
+    }
     // 툴바 초기화 실행
     createToolbar();
 })();
