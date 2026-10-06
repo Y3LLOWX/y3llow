@@ -1069,6 +1069,13 @@
             z-index: 999999; font-family: sans-serif;
         `;
 
+        // 💡 [추가] 오버레이(팝업 바깥) 클릭 시 모달 닫기
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+            }
+        });
+
         // 모달 본체
         const modal = document.createElement('div');
         modal.style.cssText = `
