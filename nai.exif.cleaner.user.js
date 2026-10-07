@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      5.0
+// @version      5.1
 // @description  NovelAI 이미지 생성 완료 즉시 EXIF 제거 후 자동 다운로드
 // @author       You
 // @match        https://novelai.net/image*
@@ -15,7 +15,9 @@
     const STORAGE_KEY_POS = 'nai_dl_toolbar_pos';
     const STORAGE_KEY_AUTO_COUNT = 'nai_dl_auto_count';
     const STORAGE_KEY_AUTO_INTERVAL = 'nai_dl_auto_interval';
-    const STORAGE_KEY_TERMS_AGREED = 'nai_dl_terms_agreed'; // 이용약관 동의 여부 키
+    const STORAGE_KEY_TERMS_AGREED = 'nai_dl_terms_agreed';
+    const STORAGE_KEY_FORMAT = 'nai_dl_format'; // 포맷 자동 저장 키
+
     const DB_NAME = 'nai_dir_storage_db';
     const STORE_NAME = 'handles';
     const HANDLE_KEY = 'target_dir_handle';
@@ -26,7 +28,10 @@
     let autoGenTargetCount = 0;
     let autoGenCurrentCount = 0;
     let autoGenInterval = parseFloat(localStorage.getItem(STORAGE_KEY_AUTO_INTERVAL)) || 2;
-    let selectedFormat = 'png';
+    let selectedFormat = localStorage.getItem(STORAGE_KEY_FORMAT) || 'png';
+
+    // 툴바 포맷 버튼 참조용
+    let formatBtnElements = {};
 
     function openDB() {
         return new Promise((resolve, reject) => {
@@ -132,113 +137,6 @@
         }, 3000);
     }
 
-    function showToastConfirm(message) {
-        return new Promise((resolve) => {
-            const toastContainer = getToastContainer();
-
-            const existingConfirms = toastContainer.querySelectorAll('.nai-confirm-toast');
-            existingConfirms.forEach(confirmEl => {
-                if (confirmEl.dataset.resolveFn) {
-                    window[confirmEl.dataset.resolveFn](false);
-                }
-                confirmEl.remove();
-            });
-
-            const toast = document.createElement('div');
-            toast.className = 'nai-confirm-toast';
-
-            const resolveId = 'resolve_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-            toast.dataset.resolveFn = resolveId;
-            window[resolveId] = resolve;
-
-            toast.style.cssText = `
-                background: rgba(20, 20, 30, 0.95);
-                color: #fff;
-                padding: 12px 16px;
-                border-radius: 8px;
-                font-size: 13px;
-                border: 1px solid rgba(255, 255, 255, 0.25);
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-                backdrop-filter: blur(8px);
-                opacity: 0;
-                transform: translateY(-10px);
-                transition: opacity 0.25s ease, transform 0.25s ease;
-                pointer-events: auto;
-                max-width: 360px;
-                word-break: break-all;
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-            `;
-
-            const textSpan = document.createElement('span');
-            textSpan.innerText = message;
-
-            const btnContainer = document.createElement('div');
-            btnContainer.style.cssText = `
-                display: flex;
-                justify-content: flex-end;
-                gap: 8px;
-            `;
-
-            const cancelBtn = document.createElement('button');
-            cancelBtn.innerText = '취소';
-            cancelBtn.style.cssText = `
-                background: #475569;
-                color: #fff;
-                border: none;
-                padding: 5px 12px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: bold;
-                cursor: pointer;
-            `;
-
-            const confirmBtn = document.createElement('button');
-            confirmBtn.innerText = '다운로드';
-            confirmBtn.style.cssText = `
-                background: #6366f1;
-                color: #fff;
-                border: none;
-                padding: 5px 12px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: bold;
-                cursor: pointer;
-            `;
-
-            function closeToast(result) {
-                toast.style.opacity = '0';
-                toast.style.transform = 'translateY(-10px)';
-                setTimeout(() => {
-                    if (toast.parentNode) {
-                        toast.parentNode.removeChild(toast);
-                    }
-                    if (window[resolveId]) {
-                        delete window[resolveId];
-                        resolve(result);
-                    }
-                }, 250);
-            }
-
-            cancelBtn.onclick = () => closeToast(false);
-            confirmBtn.onclick = () => closeToast(true);
-
-            btnContainer.appendChild(cancelBtn);
-            btnContainer.appendChild(confirmBtn);
-            toast.appendChild(textSpan);
-            toast.appendChild(btnContainer);
-
-            toastContainer.prepend(toast);
-
-            requestAnimationFrame(() => {
-                toast.style.opacity = '1';
-                toast.style.transform = 'translateY(0)';
-            });
-        });
-    }
-
-    // --- 이용약관 동의 모달 팝업 창 ---
     function showTermsModal() {
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
@@ -293,18 +191,17 @@
               <li><strong>계정 이용 책임:</strong> 자동화 기능을 통해 계정에서 발생하는 활동과 약관 위반으로 인한 불이익은 이용자 본인의 책임입니다.</li>
             </ul>
             <p style="margin: 0;">안전한 이용을 위해 위 사항을 준수해 주세요. 자세한 내용은 <a href="https://novelai.net/terms" target="_blank" style="color: #0066cc;">NovelAI 이용약관</a>을 참고하시기 바랍니다.</p>
-            `
+            `;
             contentBox.style.cssText = `
                 background: rgba(0, 0, 0, 0.3);
                 border: 1px solid rgba(255, 255, 255, 0.1);
                 border-radius: 6px;
                 padding: 12px;
                 font-size: 13px;
-                line-height: 1.2;
+                line-height: 1.4;
                 max-height: 520px;
                 overflow-y: auto;
                 color: #d1d5db;
-                white-space: pre-wrap;
             `;
 
             const agreementText = document.createElement('div');
@@ -313,7 +210,6 @@
                 font-size: 12px;
                 color: #a1a1aa;
                 text-align: center;
-                line-height: 1.4;
             `;
 
             const btnContainer = document.createElement('div');
@@ -321,7 +217,6 @@
                 display: flex;
                 gap: 10px;
                 justify-content: flex-end;
-                margin-top: 4px;
             `;
 
             const cancelBtn = document.createElement('button');
@@ -484,35 +379,44 @@
         const formatContainer = document.createElement('div');
         formatContainer.style.cssText = `display: flex; gap: 2px; justify-content: space-between;`;
 
-        const createFormatBtn = (fmt) => {
+        const formatConfigs = [
+            { label: 'PNG', value: 'png', color: '#3b82f6' },
+            { label: 'JPG', value: 'jpg', color: '#eab308' },
+            { label: 'WebP', value: 'webp', color: '#10b981' }
+        ];
+
+        formatConfigs.forEach(item => {
             const btn = document.createElement('button');
-            btn.innerText = fmt.toUpperCase();
-            btn.style.cssText = `
-                flex: 1;
-                background: ${selectedFormat === fmt ? '#6366f1' : '#334155'};
-                color: #fff;
-                border: none;
-                padding: 4px 0;
-                border-radius: 4px;
-                font-weight: bold;
-                font-size: 10px;
-                cursor: pointer;
-            `;
-            btn.onclick = () => {
-                selectedFormat = fmt;
-                Array.from(formatContainer.children).forEach(child => child.style.background = '#334155');
-                btn.style.background = '#6366f1';
+            btn.innerText = item.label;
+
+            const updateStyle = () => {
+                const isActive = selectedFormat === item.value;
+                btn.style.cssText = `
+                    flex: 1;
+                    background: ${isActive ? item.color : '#334155'};
+                    color: #fff;
+                    border: none;
+                    padding: 4px 0;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 10px;
+                    cursor: pointer;
+                    transition: background 0.2s ease;
+                `;
             };
-            return btn;
-        };
 
-        const pngFmtBtn = createFormatBtn('PNG', '#3b82f6', 'png');
-        const jpgFmtBtn = createFormatBtn('JPG', '#eab308', 'jpg');
-        const webpFmtBtn = createFormatBtn('WebP', '#10b981', 'webp');
+            btn.onclick = () => {
+                selectedFormat = item.value;
+                localStorage.setItem(STORAGE_KEY_FORMAT, item.value);
+                Object.values(formatBtnElements).forEach(b => b.updateStyle());
+            };
 
-        formatContainer.appendChild(pngFmtBtn);
-        formatContainer.appendChild(jpgFmtBtn);
-        formatContainer.appendChild(webpFmtBtn);
+            btn.updateStyle = updateStyle;
+            updateStyle();
+
+            formatBtnElements[item.value] = btn;
+            formatContainer.appendChild(btn);
+        });
 
         // --- 다운로드 수동 실행 버튼 ---
         const manualDlBtn = document.createElement('button');
@@ -617,7 +521,6 @@
             width: 100%;
         `;
 
-        // --- 생성 간격 입력 폼 (최소 2초) ---
         const intervalInputLabel = document.createElement('div');
         intervalInputLabel.innerText = '생성 간격(초)';
         intervalInputLabel.style.cssText = 'font-size: 10px; color: #ccc; text-align: center; margin-top: 2px;';
@@ -656,12 +559,11 @@
             if (isAutoGenerating) {
                 stopAutoGeneration('사용자에 의해 중지됨');
             } else {
-                // 약관 동의 확인
                 const isAgreed = localStorage.getItem(STORAGE_KEY_TERMS_AGREED) === 'true';
                 if (!isAgreed) {
                     const agreedNow = await showTermsModal();
-                    if (!agreedNow) return; // 취소 클릭 시 생성 중단
-                    revokeTermsBtn.style.display = 'block'; // 약관 동의 완료 시 철회 버튼 표시
+                    if (!agreedNow) return;
+                    revokeTermsBtn.style.display = 'block';
                 }
 
                 const count = parseInt(countInput.value, 10);
@@ -701,7 +603,6 @@
         makeDraggable(toolbar, dragHandle);
     }
 
-    // --- NAI Generate 버튼 감지 ---
     function getNaiGenerateButton() {
         const buttons = Array.from(document.querySelectorAll('button'));
         return buttons.find(b => {
@@ -710,7 +611,6 @@
         });
     }
 
-    // --- 자동 생성 제어 ---
     async function startAutoGeneration(targetCount) {
         if (!targetDirectoryHandle) {
             showDownloadToast('⚠ 저장 폴더를 먼저 선택해 주세요!');
@@ -769,21 +669,17 @@
             return;
         }
 
-        // 이전 이미지 상태 저장
         const prevElement = getVisibleImageElements()[0];
         const prevSrc = prevElement ? (prevElement.src || prevElement.toDataURL?.()) : null;
 
-        // 생성 버튼 클릭
         genBtn.click();
 
-        // 1. 이미지가 완전히 새로 생성될 때까지 모니터링 및 대기
         const isSuccess = await waitForNewImage(prevSrc);
 
         if (isSuccess && isAutoGenerating) {
             autoGenCurrentCount++;
             updateAutoButtonUI();
 
-            // 2. 완성이 확인되는 즉시 EXIF 제거 및 즉시 다운로드
             const currentImg = getVisibleImageElements()[0];
             if (currentImg) {
                 try {
@@ -796,21 +692,18 @@
                 }
             }
 
-            // 3. 다운로드 완료 후, 지정한 초 제한(간격)만큼 대기한 다음 다시 다음 생성 진행
             const delayMs = autoGenInterval * 1000;
             setTimeout(runAutoStep, delayMs);
 
         } else if (isAutoGenerating) {
-            // 생성 타임아웃 발생 시 재시도
             setTimeout(runAutoStep, 1500);
         }
     }
 
-    // 이미지 완성 감지 함수 (버튼 비활성화 해제 + 이미지 변환 감지)
     function waitForNewImage(prevSrc) {
         return new Promise((resolve) => {
             let attempts = 0;
-            const maxAttempts = 240; // 최대 120초 대기 (500ms * 240)
+            const maxAttempts = 240;
 
             const interval = setInterval(() => {
                 attempts++;
@@ -818,13 +711,11 @@
                 const currentImg = getVisibleImageElements()[0];
                 const currentSrc = currentImg ? (currentImg.src || currentImg.toDataURL?.()) : null;
 
-                // 생성 버튼이 다시 활성화(disabled === false) 상태이고, 이미지 URL/Data가 변경되었을 때 완성으로 간주
                 const isBtnReady = genBtn && !genBtn.disabled;
                 const isImageChanged = currentSrc && currentSrc !== prevSrc;
 
                 if (isBtnReady && isImageChanged) {
                     clearInterval(interval);
-                    // 렌더링 안정화를 위해 200ms 지연 후 완료 반환
                     setTimeout(() => resolve(true), 200);
                 } else if (attempts >= maxAttempts) {
                     clearInterval(interval);
@@ -941,6 +832,7 @@
         return validElements.map(item => item.el);
     }
 
+    // --- 최고 화질(quality = 1.0) 변환 보장 함수 ---
     function processImageToCleanBlob(targetElement, format) {
         return new Promise((resolve, reject) => {
             let width = 0, height = 0;
@@ -972,13 +864,18 @@
             ctx.drawImage(targetElement, 0, 0, width, height);
 
             let mimeType = 'image/png';
-            if (format === 'jpg') mimeType = 'image/jpeg';
-            else if (format === 'webp') mimeType = 'image/webp';
+            let quality = 1.0; // 최고 품질 (100%) 고정
+
+            if (format === 'jpg' || format === 'jpeg') {
+                mimeType = 'image/jpeg';
+            } else if (format === 'webp') {
+                mimeType = 'image/webp';
+            }
 
             cleanCanvas.toBlob((blob) => {
                 if (blob) resolve(blob);
                 else reject(new Error('Blob 생성 실패'));
-            }, mimeType);
+            }, mimeType, quality);
         });
     }
 
@@ -1025,7 +922,6 @@
             return;
         }
 
-        // --- 이미지가 1장일 때: 바로 다운로드 ---
         if (targetElements.length === 1) {
             if (btn) {
                 btn.dataset.busy = '1';
@@ -1048,19 +944,15 @@
             return;
         }
 
-        // --- 이미지가 2장 이상일 때: 선택 다운로드 모달 창 띄우기 ---
         showImageSelectionModal(targetElements, format, btn);
     }
 
-    // --- 선택 다운로드 모달 생성 함수 ---
     function showImageSelectionModal(targetElements, initialFormat, triggerBtn) {
-        // 기존 선택 모달이 있다면 제거
         const existingModal = document.getElementById('nai-img-select-modal');
         if (existingModal) existingModal.remove();
 
         let currentFormat = initialFormat;
 
-        // 모달 오버레이
         const overlay = document.createElement('div');
         overlay.id = 'nai-img-select-modal';
         overlay.style.cssText = `
@@ -1069,14 +961,12 @@
             z-index: 999999; font-family: sans-serif;
         `;
 
-        // 💡 [추가] 오버레이(팝업 바깥) 클릭 시 모달 닫기
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
                 overlay.remove();
             }
         });
 
-        // 모달 본체
         const modal = document.createElement('div');
         modal.style.cssText = `
             background: #1e293b; color: #fff; width: 500px; max-width: 90vw; max-height: 80vh;
@@ -1084,17 +974,14 @@
             box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
         `;
 
-        // 상단 헤더
         const header = document.createElement('div');
         header.style.cssText = `display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;`;
         header.innerHTML = `<span style="font-weight: bold; font-size: 14px;">📷 감지된 이미지 선택 (${targetElements.length}장)</span>`;
 
-        // 전체 선택 / 해제 컨트롤 영역
         const selectCtrlRow = document.createElement('div');
         selectCtrlRow.style.cssText = `display: flex; align-items: center; justify-content: space-between; font-size: 12px;`;
 
         const selectAllContainer = document.createElement('label');
-        // 👇 [수정] line-height, letter-spacing, white-space 명시 지정
         selectAllContainer.style.cssText = `
             display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
             line-height: 1; letter-spacing: normal; white-space: nowrap; font-size: 12px;
@@ -1108,28 +995,56 @@
         selectAllContainer.appendChild(selectAllCheckbox);
         selectAllContainer.appendChild(document.createTextNode('전체 선택 / 해제'));
 
-        // 모달 내 포맷 변경 탭
         const formatTabContainer = document.createElement('div');
         formatTabContainer.style.cssText = `display: flex; gap: 4px;`;
-        ['png', 'jpg', 'webp'].forEach(fmt => {
+
+        const modalFormatConfigs = [
+            { label: 'PNG', value: 'png', color: '#3b82f6' },
+            { label: 'JPG', value: 'jpg', color: '#eab308' },
+            { label: 'WebP', value: 'webp', color: '#10b981' }
+        ];
+
+        const modalBtns = {};
+        modalFormatConfigs.forEach(item => {
             const fmtBtn = document.createElement('button');
-            fmtBtn.innerText = fmt.toUpperCase();
-            fmtBtn.style.cssText = `
-                background: ${fmt === currentFormat ? '#6366f1' : '#334155'}; color: #fff; border: none;
-                padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer;
-            `;
-            fmtBtn.onclick = () => {
-                currentFormat = fmt;
-                Array.from(formatTabContainer.children).forEach(child => child.style.background = '#334155');
-                fmtBtn.style.background = '#6366f1';
+            fmtBtn.innerText = item.label;
+
+            const updateModalBtnStyle = () => {
+                const isActive = currentFormat === item.value;
+                fmtBtn.style.cssText = `
+                    background: ${isActive ? item.color : '#334155'};
+                    color: #fff;
+                    border: none;
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    transition: background 0.2s ease;
+                `;
             };
+
+            fmtBtn.onclick = () => {
+                currentFormat = item.value;
+                selectedFormat = item.value;
+                localStorage.setItem(STORAGE_KEY_FORMAT, item.value);
+
+                if (formatBtnElements[item.value]) {
+                    Object.values(formatBtnElements).forEach(b => b.updateStyle());
+                }
+                Object.values(modalBtns).forEach(b => b.updateModalBtnStyle());
+            };
+
+            fmtBtn.updateModalBtnStyle = updateModalBtnStyle;
+            updateModalBtnStyle();
+
+            modalBtns[item.value] = fmtBtn;
             formatTabContainer.appendChild(fmtBtn);
         });
 
         selectCtrlRow.appendChild(selectAllContainer);
         selectCtrlRow.appendChild(formatTabContainer);
 
-        // 이미지 아이템 목록 스크롤 영역
         const listContainer = document.createElement('div');
         listContainer.style.cssText = `
             display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto;
@@ -1140,7 +1055,6 @@
 
         targetElements.forEach((el, index) => {
             const row = document.createElement('label');
-            // 👇 [수정] padding을 줄이고 flex 정렬을 밀착
             row.style.cssText = `
                 display: flex; align-items: center; gap: 10px; background: #334155; padding: 6px 10px;
                 border-radius: 6px; cursor: pointer; transition: background 0.2s; user-select: none;
@@ -1151,12 +1065,10 @@
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = true;
-            // 👇 [수정/추가] 각 이미지 체크박스 크기 명시 지정 (width/height)
             checkbox.style.cssText = `width: 15px; height: 15px; cursor: pointer; accent-color: #6366f1; flex-shrink: 0;`;
 
             itemCheckboxes.push(checkbox);
 
-            // 썸네일 이미지 추출
             const thumbImg = document.createElement('img');
             thumbImg.style.cssText = `width: 44px; height: 44px; object-fit: cover; border-radius: 4px; background: #000; flex-shrink: 0;`;
             if (el.tagName.toLowerCase() === 'img') {
@@ -1177,12 +1089,10 @@
             listContainer.appendChild(row);
         });
 
-        // 전체 선택 토글 이벤트
         selectAllCheckbox.addEventListener('change', () => {
             itemCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
         });
 
-        // 하단 버튼 영역
         const btnRow = document.createElement('div');
         btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;`;
 
@@ -1254,6 +1164,7 @@
 
         document.body.appendChild(overlay);
     }
+
     // 툴바 초기화 실행
     createToolbar();
 })();
