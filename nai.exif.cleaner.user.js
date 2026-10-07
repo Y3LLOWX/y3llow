@@ -506,9 +506,9 @@
             return btn;
         };
 
-        const pngFmtBtn = createFormatBtn('png');
-        const jpgFmtBtn = createFormatBtn('jpg');
-        const webpFmtBtn = createFormatBtn('webp');
+        const pngFmtBtn = createFormatBtn('PNG', '#3b82f6', 'png');
+        const jpgFmtBtn = createFormatBtn('JPG', '#eab308', 'jpg');
+        const webpFmtBtn = createFormatBtn('WebP', '#10b981', 'webp');
 
         formatContainer.appendChild(pngFmtBtn);
         formatContainer.appendChild(jpgFmtBtn);
