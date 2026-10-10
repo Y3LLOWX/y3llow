@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         NovelAI EXIF 제거기 & 폴더 지정 다운로더
+// @name       NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      5.1
+// @version      5.2
 // @description  NovelAI 이미지 생성 완료 즉시 EXIF 제거 후 자동 다운로드
 // @author       You
 // @match        https://novelai.net/image*
@@ -16,21 +16,19 @@
     const STORAGE_KEY_AUTO_COUNT = 'nai_dl_auto_count';
     const STORAGE_KEY_AUTO_INTERVAL = 'nai_dl_auto_interval';
     const STORAGE_KEY_TERMS_AGREED = 'nai_dl_terms_agreed';
-    const STORAGE_KEY_FORMAT = 'nai_dl_format'; // 포맷 자동 저장 키
+    const STORAGE_KEY_FORMAT = 'nai_dl_format';
 
     const DB_NAME = 'nai_dir_storage_db';
     const STORE_NAME = 'handles';
     const HANDLE_KEY = 'target_dir_handle';
     let targetDirectoryHandle = null;
 
-    // 자동 생성 상태 변수
     let isAutoGenerating = false;
     let autoGenTargetCount = 0;
     let autoGenCurrentCount = 0;
     let autoGenInterval = parseFloat(localStorage.getItem(STORAGE_KEY_AUTO_INTERVAL)) || 2;
     let selectedFormat = localStorage.getItem(STORAGE_KEY_FORMAT) || 'png';
 
-    // 툴바 포맷 버튼 참조용
     let formatBtnElements = {};
 
     function openDB() {
@@ -375,7 +373,7 @@
             }
         });
 
-        // --- 포맷 변경 탭 (PNG/JPG/WebP) ---
+        // 포맷 변경 탭 (PNG/JPG/WebP)
         const formatContainer = document.createElement('div');
         formatContainer.style.cssText = `display: flex; gap: 2px; justify-content: space-between;`;
 
@@ -418,27 +416,11 @@
             formatContainer.appendChild(btn);
         });
 
-        // --- 다운로드 수동 실행 버튼 ---
-        const manualDlBtn = document.createElement('button');
-        manualDlBtn.innerText = '⬇ 다운로드';
-        manualDlBtn.style.cssText = `
-            background: #3b82f6;
-            color: #fff;
-            border: none;
-            padding: 6px 4px;
-            border-radius: 6px;
-            font-weight: bold;
-            font-size: 11px;
-            cursor: pointer;
-            width: 100%;
-        `;
-        manualDlBtn.addEventListener('click', () => downloadCleanImage(selectedFormat, manualDlBtn));
-
-        // --- 구분선 ---
+        // 구분선
         const hr = document.createElement('hr');
         hr.style.cssText = 'border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 2px 0;';
 
-        // --- 약관 동의 철회 버튼 ---
+        // 약관 동의 철회 버튼
         const revokeTermsBtn = document.createElement('button');
         revokeTermsBtn.id = 'nai-revoke-terms-btn';
         revokeTermsBtn.innerText = '❌ 동의 철회';
@@ -467,7 +449,7 @@
             }
         });
 
-        // --- 자동 연속 생성 컨트롤 ---
+        // 자동 연속 생성 컨트롤
         const autoControlContainer = document.createElement('div');
         autoControlContainer.style.cssText = `
             display: flex;
@@ -591,13 +573,34 @@
         autoControlContainer.appendChild(intervalInputLabel);
         autoControlContainer.appendChild(intervalInput);
 
+        // --- 다운로드 수동 실행 버튼 (하단 배치 & 시각적 구별 강화) ---
+        const manualDlBtn = document.createElement('button');
+        manualDlBtn.innerText = '⬇ 다운로드';
+        manualDlBtn.style.cssText = `
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            padding: 8px 4px;
+            border-radius: 8px;
+            font-weight: 800;
+            font-size: 12px;
+            cursor: pointer;
+            width: 100%;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+            transition: all 0.15s ease;
+        `;
+        manualDlBtn.onmouseover = () => manualDlBtn.style.filter = 'brightness(1.15)';
+        manualDlBtn.onmouseout = () => manualDlBtn.style.filter = 'brightness(1.0)';
+        manualDlBtn.addEventListener('click', () => downloadCleanImage(selectedFormat, manualDlBtn));
+
+        // 요소 조립 (순서 변경: 다운로드 버튼이 맨 아래로)
         toolbar.appendChild(dragHandle);
         toolbar.appendChild(folderBtn);
         toolbar.appendChild(formatContainer);
-        toolbar.appendChild(manualDlBtn);
         toolbar.appendChild(hr);
         toolbar.appendChild(revokeTermsBtn);
         toolbar.appendChild(autoControlContainer);
+        toolbar.appendChild(manualDlBtn);
 
         document.body.appendChild(toolbar);
         makeDraggable(toolbar, dragHandle);
@@ -832,7 +835,6 @@
         return validElements.map(item => item.el);
     }
 
-    // --- 최고 화질(quality = 1.0) 변환 보장 함수 ---
     function processImageToCleanBlob(targetElement, format) {
         return new Promise((resolve, reject) => {
             let width = 0, height = 0;
@@ -864,7 +866,7 @@
             ctx.drawImage(targetElement, 0, 0, width, height);
 
             let mimeType = 'image/png';
-            let quality = 1.0; // 최고 품질 (100%) 고정
+            let quality = 1.0;
 
             if (format === 'jpg' || format === 'jpeg') {
                 mimeType = 'image/jpeg';
@@ -1165,6 +1167,5 @@
         document.body.appendChild(overlay);
     }
 
-    // 툴바 초기화 실행
     createToolbar();
 })();
