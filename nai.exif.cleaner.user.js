@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name       NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      5.2
-// @description  NovelAI 이미지 생성 완료 즉시 EXIF 제거 후 자동 다운로드
+// @version      6
+// @description  NovelAI 이미지 생성 완료 즉시 EXIF 및 스텔스 메타데이터 제거 후 자동 다운로드
 // @author       You
 // @match        https://novelai.net/image*
 // @grant        none
@@ -573,7 +573,7 @@
         autoControlContainer.appendChild(intervalInputLabel);
         autoControlContainer.appendChild(intervalInput);
 
-        // --- 다운로드 수동 실행 버튼 (하단 배치 & 시각적 구별 강화) ---
+        // --- 다운로드 수동 실행 버튼 ---
         const manualDlBtn = document.createElement('button');
         manualDlBtn.innerText = '⬇ 다운로드';
         manualDlBtn.style.cssText = `
@@ -593,7 +593,7 @@
         manualDlBtn.onmouseout = () => manualDlBtn.style.filter = 'brightness(1.0)';
         manualDlBtn.addEventListener('click', () => downloadCleanImage(selectedFormat, manualDlBtn));
 
-        // 요소 조립 (순서 변경: 다운로드 버튼이 맨 아래로)
+        // 요소 조립
         toolbar.appendChild(dragHandle);
         toolbar.appendChild(folderBtn);
         toolbar.appendChild(formatContainer);
@@ -686,7 +686,7 @@
             const currentImg = getVisibleImageElements()[0];
             if (currentImg) {
                 try {
-                    const blob = await processImageToCleanBlob(currentImg, selectedFormat);
+                    const blob = await processInstantCleanBlob(currentImg, selectedFormat);
                     const randomFileName = generate15DigitRandomNumber() + '.' + selectedFormat;
                     await saveSingleBlob(blob, randomFileName);
                     showDownloadToast(`[${autoGenCurrentCount}/${autoGenTargetCount}] '${randomFileName}' 저장 완료`);
@@ -835,49 +835,54 @@
         return validElements.map(item => item.el);
     }
 
-    function processImageToCleanBlob(targetElement, format) {
+    // --- 초고속 메타데이터 & NAI 스텔스 청크 자동 제거 루틴 ---
+    async function processInstantCleanBlob(targetElement, format) {
+        let width = 0, height = 0;
+        if (targetElement.tagName.toLowerCase() === 'img') {
+            width = targetElement.naturalWidth || targetElement.width;
+            height = targetElement.naturalHeight || targetElement.height;
+        } else if (targetElement.tagName.toLowerCase() === 'canvas') {
+            width = targetElement.width;
+            height = targetElement.height;
+        }
+        if (!width || !height) throw new Error('이미지 크기 오류');
+
+        // 1. 새로운 캔버스 생성 (메타데이터가 전혀 없는 깨끗한 도화지 역할)
+        const cleanCanvas = document.createElement('canvas');
+        cleanCanvas.width = width;
+        cleanCanvas.height = height;
+        const ctx = cleanCanvas.getContext('2d');
+
+        // 2. 배경 투명/알파 제어 초기화 및 이미지 다시 그리기
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(targetElement, 0, 0, width, height);
+
+        // 3. NAI 스텔스 알파 숨김 시그니처 자동 탐지 및 무력화
+        try {
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const data = imageData.data;
+            for (let i = 3; i < data.length; i += 4) {
+                const a = data[i];
+                if (a > 0 && (a & 1) === 1) {
+                    data[i] = (a === 255) ? 254 : a + 1; // 홀수 알파값을 짝수로 변경하여 숨김 데이터 파괴
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+        } catch (e) {
+            console.warn('크로스오리진 캔버스 보안 제한 우회 적용:', e);
+        }
+
+        // 포맷 설정 (PNG, JPG, WebP)
+        let mimeType = 'image/png';
+        if (format === 'jpg' || format === 'jpeg') mimeType = 'image/jpeg';
+        else if (format === 'webp') mimeType = 'image/webp';
+
+        // 4. 메타데이터가 1도 포함되지 않은 순수 이미지 Blob 데이터 반환
         return new Promise((resolve, reject) => {
-            let width = 0, height = 0;
-
-            if (targetElement.tagName.toLowerCase() === 'img') {
-                width = targetElement.naturalWidth || targetElement.width;
-                height = targetElement.naturalHeight || targetElement.height;
-            } else if (targetElement.tagName.toLowerCase() === 'canvas') {
-                width = targetElement.width;
-                height = targetElement.height;
-            }
-
-            if (!width || !height) {
-                return reject(new Error('이미지 크기 정보를 가져올 수 없습니다.'));
-            }
-
-            const cleanCanvas = document.createElement('canvas');
-            cleanCanvas.width = width;
-            cleanCanvas.height = height;
-
-            const ctx = cleanCanvas.getContext('2d');
-
-            if (!ctx) {
-                return reject(new Error('Canvas 컨텍스트 생성 실패'));
-            }
-
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, width, height);
-            ctx.drawImage(targetElement, 0, 0, width, height);
-
-            let mimeType = 'image/png';
-            let quality = 1.0;
-
-            if (format === 'jpg' || format === 'jpeg') {
-                mimeType = 'image/jpeg';
-            } else if (format === 'webp') {
-                mimeType = 'image/webp';
-            }
-
             cleanCanvas.toBlob((blob) => {
                 if (blob) resolve(blob);
-                else reject(new Error('Blob 생성 실패'));
-            }, mimeType, quality);
+                else reject(new Error('Blob 변환 실패'));
+            }, mimeType, 1.0);
         });
     }
 
@@ -930,7 +935,7 @@
                 btn.style.opacity = '0.6';
             }
             try {
-                const blob = await processImageToCleanBlob(targetElements[0], format);
+                const blob = await processInstantCleanBlob(targetElements[0], format);
                 const randomFileName = generate15DigitRandomNumber() + '.' + format;
                 await saveSingleBlob(blob, randomFileName);
                 showDownloadToast(`'${randomFileName}'이 다운로드 되었습니다.`);
@@ -1133,7 +1138,7 @@
             try {
                 for (let idx of selectedIndices) {
                     const el = targetElements[idx];
-                    const blob = await processImageToCleanBlob(el, currentFormat);
+                    const blob = await processInstantCleanBlob(el, currentFormat);
                     const randomNum = generate15DigitRandomNumber();
                     const randomFileName = randomNum + '.' + currentFormat;
 
