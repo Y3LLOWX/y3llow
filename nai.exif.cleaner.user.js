@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name       NovelAI EXIF 제거기 & 폴더 지정 다운로더
 // @namespace    http://tampermonkey.net/
-// @version      6
+// @version      7
 // @description  NovelAI 이미지 생성 완료 즉시 EXIF 및 스텔스 메타데이터 제거 후 자동 다운로드
 // @author       You
 // @match        https://novelai.net/image*
@@ -56,6 +56,20 @@
             });
         } catch (e) {
             console.error('디렉토리 핸들 저장 실패:', e);
+        }
+    }
+
+    async function removeDirectoryHandle() {
+        try {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).delete(HANDLE_KEY);
+            return new Promise((resolve, reject) => {
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        } catch (e) {
+            console.error('디렉토리 핸들 삭제 실패:', e);
         }
     }
 
@@ -320,6 +334,10 @@
             line-height: 1;
         `;
 
+        // 폴더 제어 영역 (폴더 버튼 + 초기화 버튼을 가로로 배치)
+        const folderContainer = document.createElement('div');
+        folderContainer.style.cssText = `display: flex; gap: 3px; align-items: center; width: 100%;`;
+
         const folderBtn = document.createElement('button');
         folderBtn.id = 'nai-folder-btn';
         folderBtn.innerText = '📁 폴더';
@@ -335,7 +353,7 @@
             cursor: pointer;
             transition: transform 0.1s, filter 0.2s, background 0.2s;
             white-space: nowrap;
-            width: 100%;
+            flex: 1;
             overflow: hidden;
             text-overflow: ellipsis;
             text-align: center;
@@ -343,14 +361,46 @@
         folderBtn.onmouseover = () => folderBtn.style.filter = 'brightness(1.2)';
         folderBtn.onmouseout = () => folderBtn.style.filter = 'brightness(1.0)';
 
-        if (!targetDirectoryHandle) {
-            const savedHandle = await loadSavedDirectoryHandle();
-            if (savedHandle) {
-                targetDirectoryHandle = savedHandle;
-                folderBtn.innerText = `📁 ${targetDirectoryHandle.name}`;
-                folderBtn.title = `저장 폴더: ${targetDirectoryHandle.name} (클릭하여 변경)`;
+        // 초기화 버튼 ('↺')
+        const resetFolderBtn = document.createElement('button');
+        resetFolderBtn.id = 'nai-folder-reset-btn';
+        resetFolderBtn.innerText = '↺';
+        resetFolderBtn.title = '지정된 폴더 경로를 초기화하고 기본 다운로드 경로로 되돌립니다.';
+        resetFolderBtn.style.cssText = `
+            background: #64748b;
+            color: #fff;
+            border: none;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: none;
+            flex-shrink: 0;
+        `;
+        resetFolderBtn.onmouseover = () => resetFolderBtn.style.background = '#ef4444';
+        resetFolderBtn.onmouseout = () => resetFolderBtn.style.background = '#64748b';
+
+        // 폴더 상태 반영 및 UI 갱신 함수
+        const updateFolderUI = (handleName = null) => {
+            if (handleName) {
+                folderBtn.innerText = `📁 ${handleName}`;
+                folderBtn.title = `저장 폴더: ${handleName} (클릭하여 변경)`;
                 folderBtn.style.background = '#6366f1';
+                resetFolderBtn.style.display = 'block'; // 확정적으로 표시
+            } else {
+                folderBtn.innerText = '📁 폴더';
+                folderBtn.title = '저장할 폴더 선택';
+                folderBtn.style.background = '#475569';
+                resetFolderBtn.style.display = 'none';
             }
+        };
+
+        const savedHandle = await loadSavedDirectoryHandle();
+        if (savedHandle) {
+            targetDirectoryHandle = savedHandle;
+            updateFolderUI(targetDirectoryHandle.name);
         }
 
         folderBtn.addEventListener('click', async () => {
@@ -361,9 +411,8 @@
             try {
                 targetDirectoryHandle = await window.showDirectoryPicker();
                 await saveDirectoryHandle(targetDirectoryHandle);
-                folderBtn.innerText = `📁 ${targetDirectoryHandle.name}`;
-                folderBtn.title = `저장 폴더: ${targetDirectoryHandle.name} (클릭하여 변경)`;
-                folderBtn.style.background = '#6366f1';
+                updateFolderUI(targetDirectoryHandle.name);
+                showDownloadToast(`📁 폴더가 지정되었습니다: ${targetDirectoryHandle.name}`);
             } catch (err) {
                 if (err.name === 'SecurityError' || err.message?.includes('system')) {
                     alert("⚠ 보안상 '다운로드'나 '문서' 루트 폴더는 직접 선택할 수 없습니다.\n\n해당 폴더 안에 새 폴더를 만들어 선택해주세요!");
@@ -372,6 +421,19 @@
                 }
             }
         });
+
+        // '↺' 버튼 클릭 시 경로 초기화
+        resetFolderBtn.addEventListener('click', async () => {
+            if (confirm('지정된 폴더 설정을 해제하고 기본 다운로드 경로로 초기화하시겠습니까?')) {
+                targetDirectoryHandle = null;
+                await removeDirectoryHandle();
+                updateFolderUI(null);
+                showDownloadToast('🔄 폴더 경로가 초기화되었습니다. 기본 다운로드 경로로 저장됩니다.');
+            }
+        });
+
+        folderContainer.appendChild(folderBtn);
+        folderContainer.appendChild(resetFolderBtn);
 
         // 포맷 변경 탭 (PNG/JPG/WebP)
         const formatContainer = document.createElement('div');
@@ -595,7 +657,7 @@
 
         // 요소 조립
         toolbar.appendChild(dragHandle);
-        toolbar.appendChild(folderBtn);
+        toolbar.appendChild(folderContainer);
         toolbar.appendChild(formatContainer);
         toolbar.appendChild(hr);
         toolbar.appendChild(revokeTermsBtn);
@@ -847,24 +909,21 @@
         }
         if (!width || !height) throw new Error('이미지 크기 오류');
 
-        // 1. 새로운 캔버스 생성 (메타데이터가 전혀 없는 깨끗한 도화지 역할)
         const cleanCanvas = document.createElement('canvas');
         cleanCanvas.width = width;
         cleanCanvas.height = height;
         const ctx = cleanCanvas.getContext('2d');
 
-        // 2. 배경 투명/알파 제어 초기화 및 이미지 다시 그리기
         ctx.clearRect(0, 0, width, height);
         ctx.drawImage(targetElement, 0, 0, width, height);
 
-        // 3. NAI 스텔스 알파 숨김 시그니처 자동 탐지 및 무력화
         try {
             const imageData = ctx.getImageData(0, 0, width, height);
             const data = imageData.data;
             for (let i = 3; i < data.length; i += 4) {
                 const a = data[i];
                 if (a > 0 && (a & 1) === 1) {
-                    data[i] = (a === 255) ? 254 : a + 1; // 홀수 알파값을 짝수로 변경하여 숨김 데이터 파괴
+                    data[i] = (a === 255) ? 254 : a + 1;
                 }
             }
             ctx.putImageData(imageData, 0, 0);
@@ -872,12 +931,10 @@
             console.warn('크로스오리진 캔버스 보안 제한 우회 적용:', e);
         }
 
-        // 포맷 설정 (PNG, JPG, WebP)
         let mimeType = 'image/png';
         if (format === 'jpg' || format === 'jpeg') mimeType = 'image/jpeg';
         else if (format === 'webp') mimeType = 'image/webp';
 
-        // 4. 메타데이터가 1도 포함되지 않은 순수 이미지 Blob 데이터 반환
         return new Promise((resolve, reject) => {
             cleanCanvas.toBlob((blob) => {
                 if (blob) resolve(blob);
